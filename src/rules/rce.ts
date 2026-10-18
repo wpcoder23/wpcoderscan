@@ -1,17 +1,14 @@
 // Reguła: zdalne wykonanie kodu i niebezpieczne wykonanie poleceń.
-// Wykrywa eval z danych dynamicznych, dynamiczne include/require,
-// rodzinę system/exec/shell_exec na zmiennej oraz polecenia w backtickach.
+// Wykrywa eval z danych dynamicznych, include/require ze ścieżką z danych
+// użytkownika, rodzinę system/exec/shell_exec oraz polecenia w backtickach.
+// Dane śledzimy lekką analizą skażenia (taint.ts). Superglobal wprost to
+// wykrycie pewne. Zmienna zasilona danymi z superglobala to heurystyka.
+// Zwykłe dynamiczne include ze ścieżką złożoną ze stałych i zmiennych
+// wtyczki nie jest zgłaszane, bo tak działa większość szablonów w WordPressie.
 import { walk } from '../parser';
-import {
-  analyzeDynamic,
-  asNode,
-  calledName,
-  callArgs,
-  nodeStart,
-  type AnyNode,
-  type DynInfo,
-} from './ast-utils';
-import type { Finding, FileContext, Rule, Severity } from './types';
+import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
+import { CODE_SPEC, EXEC_SPEC, INCLUDE_SPEC, TaintAnalyzer, type TaintHit } from './taint';
+import type { Confidence, Finding, FileContext, PhpNode, Rule, Severity } from './types';
 
 // Funkcje uruchamiające polecenia systemowe.
 const SHELL_SINKS = new Set([
@@ -24,20 +21,6 @@ const SHELL_SINKS = new Set([
   'pcntl_exec',
 ]);
 
-function dynOf(node: unknown): DynInfo {
-  const info: DynInfo = { hasVar: false, hasSuperglobal: false };
-  analyzeDynamic(node, info);
-  return info;
-}
-
-function isDynamic(info: DynInfo): boolean {
-  return info.hasVar || info.hasSuperglobal;
-}
-
-function sevFor(info: DynInfo): Severity {
-  return info.hasSuperglobal ? 'critical' : 'high';
-}
-
 export const rceRule: Rule = {
   id: 'wp.rce.dynamic',
   title: 'Dynamiczne wykonanie kodu lub polecenia systemowego',
@@ -47,10 +30,14 @@ export const rceRule: Rule = {
   asvs: ['5.2.4'],
   check(ctx: FileContext): Finding[] {
     const findings: Finding[] = [];
+    const evalTaint = new TaintAnalyzer(ctx.ast, CODE_SPEC);
+    const includeTaint = new TaintAnalyzer(ctx.ast, INCLUDE_SPEC);
+    const execTaint = new TaintAnalyzer(ctx.ast, EXEC_SPEC);
 
     const push = (
       node: AnyNode,
       severity: Severity,
+      confidence: Confidence,
       message: string,
       cwe: string[],
       asvs: string[],
@@ -60,7 +47,7 @@ export const rceRule: Rule = {
       findings.push({
         ruleId: rceRule.id,
         severity,
-        confidence: 'firm',
+        confidence,
         message,
         file: ctx.file,
         line: loc?.line ?? 1,
@@ -71,16 +58,44 @@ export const rceRule: Rule = {
       });
     };
 
-    walk(ctx.ast, (node) => {
+    // Pewność i waga zależą od tego, skąd pochodzą dane.
+    const grade = (
+      hit: TaintHit,
+      critical: Severity,
+    ): { sev: Severity; conf: Confidence; from: string } | null => {
+      if (hit.direct) return { sev: critical, conf: 'firm', from: 'z superglobala' };
+      if (hit.viaVar) {
+        return { sev: 'high', conf: 'heuristic', from: `ze zmiennej $${hit.via ?? ''} zasilonej superglobalem` };
+      }
+      return null;
+    };
+
+    const analyzeArgs = (analyzer: TaintAnalyzer, n: AnyNode, stack: PhpNode[]): TaintHit => {
+      let direct = false;
+      let viaVar = false;
+      let via: string | undefined;
+      for (const a of callArgs(n)) {
+        const h = analyzer.analyze(a, stack, n);
+        direct = direct || h.direct;
+        viaVar = viaVar || h.viaVar;
+        via = via ?? h.via;
+      }
+      return { direct, viaVar, via };
+    };
+
+    walk(ctx.ast, (node, stack) => {
       const n = node as AnyNode;
 
       // eval z czegokolwiek poza zwykłym literałem tekstowym.
       if (n.kind === 'eval') {
         const src = asNode(n.source);
-        if (src && src.kind === 'string') return;
+        if (!src || src.kind === 'string') return;
+        const hit = evalTaint.analyze(src, stack);
+        const g = grade(hit, 'critical');
         push(
           n,
-          'critical',
+          g ? g.sev : 'medium',
+          g ? g.conf : 'heuristic',
           'eval wykonuje kod zbudowany dynamicznie. To prosta droga do zdalnego wykonania kodu.',
           ['CWE-95'],
           ['5.2.4'],
@@ -89,14 +104,16 @@ export const rceRule: Rule = {
         return;
       }
 
-      // include/require ze ścieżką zależną od zmiennej albo superglobala.
+      // include/require ze ścieżką pochodzącą od użytkownika.
       if (n.kind === 'include') {
-        const info = dynOf(n.target);
-        if (!isDynamic(info)) return;
+        const hit = includeTaint.analyze(n.target, stack);
+        const g = grade(hit, 'critical');
+        if (!g) return;
         push(
           n,
-          sevFor(info),
-          'include lub require ze ścieżką z danych dynamicznych. Grozi dołączeniem obcego pliku i wykonaniem kodu.',
+          g.sev,
+          g.conf,
+          `include lub require ze ścieżką ${g.from}. Grozi dołączeniem obcego pliku i wykonaniem kodu.`,
           ['CWE-98'],
           ['12.3.1'],
           'Nie buduj ścieżki z danych wejściowych. Użyj stałej listy dozwolonych plików (allowlista) albo ścieżek względem katalogu wtyczki.',
@@ -106,12 +123,13 @@ export const rceRule: Rule = {
 
       // backticki, czyli wykonanie polecenia powłoki.
       if (n.kind === 'encapsed' && n.type === 'shell') {
-        const info = dynOf(n.value);
-        if (!isDynamic(info)) return;
+        const g = grade(execTaint.analyze(n, stack), 'critical');
+        if (!g) return;
         push(
           n,
-          sevFor(info),
-          'Polecenie w backtickach z danych dynamicznych. Grozi wstrzyknięciem polecenia systemowego.',
+          g.sev,
+          g.conf,
+          `Polecenie w backtickach ${g.from}. Grozi wstrzyknięciem polecenia systemowego.`,
           ['CWE-78'],
           ['5.3.8'],
           'Unikaj powłoki. Jeśli musisz, przekaż argumenty przez escapeshellarg i nie sklejaj ich w tekst polecenia.',
@@ -119,15 +137,16 @@ export const rceRule: Rule = {
         return;
       }
 
-      // system, exec, shell_exec i pokrewne z argumentem dynamicznym.
+      // system, exec, shell_exec i pokrewne z argumentem od użytkownika.
       const name = calledName(n);
       if (name && SHELL_SINKS.has(name)) {
-        const info = dynOf(callArgs(n));
-        if (!isDynamic(info)) return;
+        const g = grade(analyzeArgs(execTaint, n, stack), 'critical');
+        if (!g) return;
         push(
           n,
-          sevFor(info),
-          `${name}() uruchamia polecenie z danych dynamicznych. Grozi wstrzyknięciem polecenia systemowego.`,
+          g.sev,
+          g.conf,
+          `${name}() uruchamia polecenie ${g.from}. Grozi wstrzyknięciem polecenia systemowego.`,
           ['CWE-78'],
           ['5.3.8'],
           'Unikaj powłoki. Jeśli musisz, przekaż argumenty przez escapeshellarg i nie sklejaj ich w tekst polecenia.',

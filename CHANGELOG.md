@@ -10,4 +10,4 @@ Pierwsze wydanie publiczne.
 - Raporty: terminal, JSON i SARIF 2.1.0.
 - Tryb `--diff <ref>` do szybkiego skanu zmian w pull requestach.
 - Akcja GitHub (composite) budowana ze źródeł repozytorium.
-- Walidacja na 253 realnych wtyczkach i motywach WordPress: 0 awarii, około 48 tysięcy plików PHP.
+- Walidacja na 253 realnych wtyczkach i motywach WordPress: 0 awarii, około 42 tysiące plików PHP.

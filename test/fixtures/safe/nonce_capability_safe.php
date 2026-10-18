@@ -27,3 +27,17 @@ function public_ping_handler() {
 
 // Callback metody obiektu, którego nie rozwiązujemy.
 add_action( 'admin_post_obj_handler', array( $this, 'handle' ) );
+
+// Uchwyt tylko czyta dane, nie zmienia stanu. Brak nonce nie jest tu błędem.
+add_action( 'wp_ajax_nopriv_search_posts', 'search_posts_handler' );
+function search_posts_handler() {
+	$posts = get_posts( array( 's' => sanitize_text_field( $_GET['s'] ) ) );
+	wp_send_json_success( $posts );
+}
+
+// Weryfikację robi pomocnik z nazwą wskazującą na kontrolę dostępu.
+add_action( 'admin_post_guarded_save', 'guarded_save_handler' );
+function guarded_save_handler() {
+	myplugin_verify_request();
+	update_option( 'guarded', $_POST['v'] );
+}

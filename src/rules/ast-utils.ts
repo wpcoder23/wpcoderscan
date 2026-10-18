@@ -40,10 +40,14 @@ export function isSuperglobalAccess(node: unknown): boolean {
 }
 
 // Nazwa wołanej funkcji, gdy węzeł to proste wywołanie po nazwie.
+// Zwracana małymi literami i bez wiodącego ukośnika (\esc_html -> esc_html),
+// bo PHP nie rozróżnia wielkości liter w nazwach funkcji.
 export function calledName(node: AnyNode): string | undefined {
   if (node.kind !== 'call') return undefined;
   const what = asNode(node.what);
-  if (what && what.kind === 'name' && typeof what.name === 'string') return what.name;
+  if (what && what.kind === 'name' && typeof what.name === 'string') {
+    return what.name.replace(/^\\/, '').toLowerCase();
+  }
   return undefined;
 }
 

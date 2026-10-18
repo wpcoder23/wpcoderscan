@@ -21,17 +21,19 @@ describe('korpus CVE: dziurawa mini-wtyczka', () => {
     const r = await scan(vuln, {});
     expect(r.errors).toHaveLength(0);
     const m = byRule(r.findings);
-    expect(m['wp.sqli.unprepared']).toBe(2);
-    expect(m['wp.auth.unprotected_action']).toBe(3);
+    // Zapytanie z (int) $id jest bezpieczne, zostaje tylko $term z $_POST.
+    expect(m['wp.sqli.unprepared']).toBe(1);
+    // Wyszukiwarka tylko czyta, więc bez zmiany stanu nie jest zgłaszana.
+    expect(m['wp.auth.unprotected_action']).toBe(2);
     expect(m['wp.xss.echo_superglobal']).toBe(1);
     expect(m['wp.rest.no_permission_callback']).toBe(1);
     expect(m['wp.unserialize.user_input']).toBe(1);
     expect(m['wp.option.no_sanitize_callback']).toBe(1);
-    expect(r.findings).toHaveLength(9);
+    expect(r.findings).toHaveLength(7);
 
     // Podział nonce kontra uprawnienia w uchwytach akcji.
     const auth = r.findings.filter((f) => f.ruleId === 'wp.auth.unprotected_action');
-    expect(auth.filter((f) => (f.cwe ?? []).includes('CWE-352'))).toHaveLength(2);
+    expect(auth.filter((f) => (f.cwe ?? []).includes('CWE-352'))).toHaveLength(1);
     expect(auth.filter((f) => (f.cwe ?? []).includes('CWE-862'))).toHaveLength(1);
   });
 });

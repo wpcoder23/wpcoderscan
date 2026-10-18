@@ -25,8 +25,14 @@ describe('reguła SQL injection', () => {
   it('wykrywa niezabezpieczone zapytania $wpdb', async () => {
     const r = await scan(vulnerable, {});
     const sqli = r.findings.filter((f) => f.ruleId === 'wp.sqli.unprepared');
-    expect(sqli.length).toBeGreaterThanOrEqual(2);
-    expect(sqli.some((f) => f.severity === 'critical')).toBe(true);
+    // Superglobal wprost jest pewny. Zmienne zasilone superglobalem to heurystyka.
+    const firm = sqli.filter((f) => f.confidence === 'firm');
+    const heur = sqli.filter((f) => f.confidence === 'heuristic');
+    expect(firm).toHaveLength(1);
+    expect(firm[0].severity).toBe('critical');
+    // $id, $name, $item w pętli foreach oraz $sql złożone z $search.
+    expect(heur).toHaveLength(4);
+    expect(heur.every((f) => f.severity === 'high')).toBe(true);
     expect(r.errors).toHaveLength(0);
   });
 
@@ -42,10 +48,14 @@ describe('reguła REST permission_callback', () => {
   it('wykrywa brak permission_callback i __return_true', async () => {
     const r = await scan(restVulnerable, {});
     const rest = r.findings.filter((f) => f.ruleId === 'wp.rest.no_permission_callback');
-    // Dwa braki (/items oraz DELETE w /multi) i jeden __return_true (/open).
-    expect(rest.filter((f) => f.severity === 'high')).toHaveLength(2);
-    expect(rest.filter((f) => f.severity === 'medium')).toHaveLength(1);
-    expect(rest.every((f) => f.confidence === 'firm')).toBe(true);
+    // Dwa braki (/items oraz DELETE w /multi) są pewne. __return_true na
+    // trasie zapisującej (/write) to heurystyka. Na trasie GET (/open) pomijamy.
+    const missing = rest.filter((f) => f.severity === 'high');
+    const open = rest.filter((f) => f.severity === 'medium');
+    expect(missing).toHaveLength(2);
+    expect(missing.every((f) => f.confidence === 'firm')).toBe(true);
+    expect(open).toHaveLength(1);
+    expect(open[0].confidence).toBe('heuristic');
     expect(r.errors).toHaveLength(0);
   });
 
@@ -61,11 +71,16 @@ describe('reguła RCE i wykonanie poleceń', () => {
   it('wykrywa eval, dynamiczne include i polecenia systemowe', async () => {
     const r = await scan(rceVulnerable, {});
     const rce = r.findings.filter((f) => f.ruleId === 'wp.rce.dynamic');
-    // eval, require($_GET), shell_exec($_POST) sa krytyczne.
-    expect(rce.filter((f) => f.severity === 'critical')).toHaveLength(3);
-    // include $template, system($cmd), backtick $path sa wysokie.
-    expect(rce.filter((f) => f.severity === 'high')).toHaveLength(3);
-    expect(rce.every((f) => f.confidence === 'firm')).toBe(true);
+    // eval($_POST), require($_GET), shell_exec($_POST) i backtick z $_GET: pewne, krytyczne.
+    const firm = rce.filter((f) => f.confidence === 'firm');
+    expect(firm).toHaveLength(4);
+    expect(firm.every((f) => f.severity === 'critical')).toBe(true);
+    // include po $page i exec po $host: heurystyka, wysoka waga.
+    // eval($user_code) o nieznanym pochodzeniu: heurystyka, średnia waga.
+    const heur = rce.filter((f) => f.confidence === 'heuristic');
+    expect(heur).toHaveLength(3);
+    expect(heur.filter((f) => f.severity === 'high')).toHaveLength(2);
+    expect(heur.filter((f) => f.severity === 'medium')).toHaveLength(1);
     expect(r.errors).toHaveLength(0);
   });
 
@@ -115,8 +130,11 @@ describe('reguła XSS echo/print', () => {
   it('wykrywa superglobal w echo i print bez ucieczki', async () => {
     const r = await scan(xssVulnerable, {});
     const xss = r.findings.filter((f) => f.ruleId === 'wp.xss.echo_superglobal');
-    expect(xss).toHaveLength(4);
-    expect(xss.every((f) => f.severity === 'high' && f.confidence === 'heuristic')).toBe(true);
+    expect(xss).toHaveLength(5);
+    expect(xss.every((f) => f.confidence === 'heuristic')).toBe(true);
+    // Cztery z superglobala wprost, jedno ze zmiennej $query.
+    expect(xss.filter((f) => f.severity === 'high')).toHaveLength(4);
+    expect(xss.filter((f) => f.severity === 'medium')).toHaveLength(1);
     expect(r.errors).toHaveLength(0);
   });
 
@@ -158,7 +176,8 @@ describe('reguła sekretów', () => {
     const stripe = 'sk_' + 'live_' + '0123456789abcdefABCD1234';
     const github = 'ghp_' + 'A'.repeat(36);
     const google = 'AIza' + 'B'.repeat(35);
-    const pem = '-----BEGIN ' + 'RSA PRIVATE KEY' + '-----';
+    const pem = '-----BEGIN ' + 'RSA PRIVATE KEY' + '-----\n' + 'MIIEowIBAAKCAQEA'.repeat(5);
+    const pemHeaderOnly = '-----BEGIN ' + 'PRIVATE KEY' + '-----';
     const dbPass = 'S3cr3t' + 'Pass' + 'w0rd123';
     const apiKeyVal = 'abcdef' + 'gh123456';
     const php = [
@@ -167,11 +186,15 @@ describe('reguła sekretów', () => {
       `$b = '${stripe}';`,
       `$c = '${github}';`,
       `$d = '${google}';`,
-      `$e = '${pem}';`,
+      `$e = "${pem}";`,
+      `$h = '${pemHeaderOnly}';`,
       `define('DB_PASSWORD', '${dbPass}');`,
       `$api_key = '${apiKeyVal}';`,
       "define('API_KEY', 'YOUR_API_KEY_HERE');",
       "$password = 'changeme';",
+      "$password_label = 'Podaj hasło do konta';",
+      "$bypass = 'abcdefgh123456';",
+      "$token_url = 'https://example.com/path/12345678';",
       '',
     ].join('\n');
     dir = mkdtempSync(join(tmpdir(), 'wpcs-sec-'));

@@ -24,3 +24,10 @@ register_rest_route( 'myplugin/v1', '/multi', array(
 		'callback' => 'myplugin_delete',
 	),
 ) );
+
+// __return_true na trasie, która zmienia dane.
+register_rest_route( 'myplugin/v1', '/write', array(
+	'methods'             => array( 'POST', 'PUT' ),
+	'callback'            => 'myplugin_write',
+	'permission_callback' => '__return_true',
+) );

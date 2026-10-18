@@ -1,10 +1,15 @@
 // Reguła: SQL injection w zapytaniach $wpdb budowanych bez prepare.
 // Wykrywa wywołania $wpdb->query/get_results/get_row/get_col/get_var,
-// w których argument SQL powstaje z interpolacji lub sklejania ze zmienną.
-// Pomija interpolację nazw tabel ($wpdb->posts itp.) oraz $wpdb->prepare().
+// w których zapytanie powstaje z danych użytkownika. Dane śledzimy lekką
+// analizą skażenia w obrębie funkcji (taint.ts). Superglobal wprost w
+// zapytaniu to wykrycie pewne. Zmienna wcześniej zasilona danymi z
+// superglobala to heurystyka. Zwykła zmienna o nieznanym pochodzeniu
+// (nazwa tabeli, parametr funkcji) nie jest zgłaszana, bo w realnych
+// wtyczkach to prawie zawsze fałszywy alarm.
 import { walk } from '../parser';
-import { asNode, baseVariable, nodeStart, offsetName, SUPERGLOBALS, type AnyNode } from './ast-utils';
-import type { Finding, FileContext, Rule, Severity } from './types';
+import { asNode, nodeStart, offsetName, type AnyNode } from './ast-utils';
+import { SQL_SPEC, TaintAnalyzer } from './taint';
+import type { Finding, FileContext, Rule } from './types';
 
 const SINKS = new Set(['query', 'get_results', 'get_row', 'get_col', 'get_var']);
 
@@ -23,85 +28,18 @@ function wpdbMethodCall(node: unknown): string | undefined {
   return offsetName(callee.offset);
 }
 
-function isPrepareCall(node: unknown): boolean {
-  return wpdbMethodCall(node) === 'prepare';
-}
-
-// Interpolacja $wpdb->tabela to nazwa tabeli, bezpieczna.
-function isWpdbProp(node: unknown): boolean {
-  const n = asNode(node);
-  return !!n && n.kind === 'propertylookup' && isWpdbVar(n.what);
-}
-
-interface RiskPart {
-  superglobal: boolean;
-}
-
-// Zbiera ryzykowne elementy dynamiczne z wyrażenia SQL.
-function collectRisky(node: unknown, acc: RiskPart[]): void {
-  const n = asNode(node);
-  if (!n) return;
-  if (Array.isArray(node)) {
-    for (const e of node as unknown[]) collectRisky(e, acc);
-    return;
-  }
-  switch (n.kind) {
-    case 'string':
-    case 'number':
-    case 'boolean':
-    case 'nowdoc':
-      return;
-    case 'propertylookup':
-      if (isWpdbProp(n)) return; // nazwa tabeli, bezpieczne
-      acc.push({ superglobal: false });
-      return;
-    case 'variable': {
-      if (n.name === 'wpdb') return;
-      const name = typeof n.name === 'string' ? n.name : '';
-      acc.push({ superglobal: SUPERGLOBALS.has(name) });
-      return;
-    }
-    case 'offsetlookup': {
-      const base = baseVariable(n);
-      const sg = !!base && base.kind === 'variable' && SUPERGLOBALS.has(base.name as string);
-      acc.push({ superglobal: sg });
-      return;
-    }
-    case 'call':
-      if (isPrepareCall(n)) return;
-      acc.push({ superglobal: false });
-      return;
-    case 'encapsed':
-      collectRisky(n.value, acc);
-      return;
-    case 'bin':
-      collectRisky(n.left, acc);
-      collectRisky(n.right, acc);
-      return;
-    default:
-      for (const k of Object.keys(n)) {
-        if (k === 'loc' || k === 'leadingComments' || k === 'trailingComments') continue;
-        collectRisky(n[k], acc);
-      }
-  }
-}
-
-function severityFor(arg: AnyNode, risky: RiskPart[]): Severity {
-  if (risky.some((r) => r.superglobal)) return 'critical';
-  if (arg.kind === 'encapsed' || arg.kind === 'bin') return 'high';
-  return 'medium';
-}
-
 export const sqliRule: Rule = {
   id: 'wp.sqli.unprepared',
-  title: 'Zapytanie do bazy bez $wpdb->prepare z danymi dynamicznymi',
+  title: 'Zapytanie do bazy bez $wpdb->prepare z danymi od użytkownika',
   severity: 'high',
   confidence: 'firm',
   cwe: ['CWE-89'],
   asvs: ['5.3.4'],
   check(ctx: FileContext): Finding[] {
     const findings: Finding[] = [];
-    walk(ctx.ast, (node) => {
+    const taint = new TaintAnalyzer(ctx.ast, SQL_SPEC);
+
+    walk(ctx.ast, (node, stack) => {
       const method = wpdbMethodCall(node);
       if (!method || !SINKS.has(method)) return;
 
@@ -109,26 +47,35 @@ export const sqliRule: Rule = {
       const arg = asNode(args?.[0]);
       if (!arg) return;
       if (arg.kind === 'string' || arg.kind === 'number') return; // literał
-      if (isPrepareCall(arg)) return; // $wpdb->query($wpdb->prepare(...))
 
-      const risky: RiskPart[] = [];
-      collectRisky(arg, risky);
-      if (risky.length === 0) return; // tylko nazwy tabel $wpdb->..., bezpieczne
+      const hit = taint.analyze(arg, stack);
+      if (!hit.direct && !hit.viaVar) return;
 
-      const sev = severityFor(arg, risky);
       const loc = nodeStart(arg) ?? nodeStart(node as AnyNode);
-      findings.push({
+      const base = {
         ruleId: sqliRule.id,
-        severity: sev,
-        confidence: 'firm',
-        message: `Wywołanie $wpdb->${method}() buduje zapytanie z danych dynamicznych bez prepare. Grozi SQL injection.`,
         file: ctx.file,
         line: loc?.line ?? 1,
         column: loc?.column ?? 0,
         cwe: sqliRule.cwe,
         asvs: sqliRule.asvs,
         fix: 'Użyj $wpdb->prepare() z placeholderami %s, %d, %f i przekaż dane jako argumenty, zamiast sklejać je w tekst zapytania.',
-      });
+      };
+      if (hit.direct) {
+        findings.push({
+          ...base,
+          severity: 'critical',
+          confidence: 'firm',
+          message: `Wywołanie $wpdb->${method}() wkleja dane z superglobala do zapytania bez prepare. Grozi SQL injection.`,
+        });
+      } else {
+        findings.push({
+          ...base,
+          severity: 'high',
+          confidence: 'heuristic',
+          message: `Wywołanie $wpdb->${method}() używa zmiennej $${hit.via ?? ''}, która zawiera dane z superglobala, i buduje z niej zapytanie bez prepare. Prawdopodobny SQL injection.`,
+        });
+      }
     });
     return findings;
   },

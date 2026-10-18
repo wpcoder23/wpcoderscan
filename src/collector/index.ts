@@ -11,8 +11,12 @@ export interface CollectOptions {
 const DEFAULT_IGNORE = ['vendor', 'node_modules', '.git', '.svn', 'dist', 'build'];
 const DEFAULT_EXT = ['.php'];
 
+// Katalogi z zależnościami o wariantach nazw, np. vendor-prefixed (Strauss, PHP-Scoper).
+const VENDOR_LIKE = /^vendors?([-_].+)?$/i;
+
 export async function collectPhpFiles(target: string, opts: CollectOptions = {}): Promise<string[]> {
   const ignore = new Set(opts.ignoreDirs ?? DEFAULT_IGNORE);
+  const skipVendorLike = !opts.ignoreDirs;
   const exts = opts.extensions ?? DEFAULT_EXT;
   const out: string[] = [];
 
@@ -27,7 +31,7 @@ export async function collectPhpFiles(target: string, opts: CollectOptions = {})
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (ignore.has(e.name)) continue;
+        if (ignore.has(e.name) || (skipVendorLike && VENDOR_LIKE.test(e.name))) continue;
         await walkDir(full);
       } else if (e.isFile() && exts.includes(path.extname(e.name).toLowerCase())) {
         out.push(full);

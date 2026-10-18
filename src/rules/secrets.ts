@@ -21,12 +21,21 @@ const PROVIDER_PATTERNS: ProviderPattern[] = [
   { re: /\bgh[pousr]_[0-9A-Za-z]{36,}\b/, severity: 'critical', label: 'token GitHub' },
   { re: /\bAIza[0-9A-Za-z_-]{35}\b/, severity: 'high', label: 'klucz API Google' },
   { re: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/, severity: 'high', label: 'token Slack' },
-  { re: /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/, severity: 'critical', label: 'klucz prywatny' },
+  // Sam nagłówek PEM to zwykle tekst parsera. Klucz to nagłówek i treść base64.
+  { re: /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----\s*[A-Za-z0-9+/=\s]{40,}/, severity: 'critical', label: 'klucz prywatny' },
   { re: /\bSG\.[\w-]{16,}\.[\w-]{16,}\b/, severity: 'high', label: 'klucz API SendGrid' },
 ];
 
 // Nazwy sugerujące sekret.
-const SECRET_NAME = /(pass(word|wd)?|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|client[_-]?secret)/i;
+const SECRET_NAME = /(pass(word|wd|phrase)|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|client[_-]?secret)/i;
+
+// Nazwa wygląda jak identyfikator (zmienna, stała, klucz tablicy), nie jak etykieta dla człowieka.
+const IDENTIFIER_LIKE = /^[A-Za-z_][\w-]*$/;
+
+// Wartość wygląda jak token: bez spacji, bez cudzysłowów, co najmniej litera i cyfra.
+function looksLikeToken(value: string): boolean {
+  return value.length >= 12 && !/\s/.test(value) && /[A-Za-z]/.test(value) && /\d/.test(value);
+}
 
 // Oczywiste atrapy, których nie zgłaszamy.
 const PLACEHOLDER = /(example|changeme|your[_-]?|placeholder|xxxx|dummy|<[^>]+>|\{\{.*\}\}|%s|^\*+$|^\.\.\.$|^$)/i;
@@ -81,8 +90,8 @@ export const secretsRule: Rule = {
       if (!v || v.kind !== 'string' || typeof v.value !== 'string') return false;
       const value = v.value;
       if (matchProvider(value)) return false; // pokryje to przebieg dostawców
-      if (!SECRET_NAME.test(nameSource)) return false;
-      if (value.length < 8 || PLACEHOLDER.test(value)) return false;
+      if (!IDENTIFIER_LIKE.test(nameSource) || !SECRET_NAME.test(nameSource)) return false;
+      if (!looksLikeToken(value) || PLACEHOLDER.test(value)) return false;
       emit(
         v,
         'medium',

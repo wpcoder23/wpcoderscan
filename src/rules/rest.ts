@@ -1,7 +1,9 @@
 // Reguła: trasa REST API bez permission_callback albo z __return_true.
 // register_rest_route bez permission_callback wystawia endpoint bez kontroli
-// dostępu. permission_callback ustawiony na __return_true otwiera go dla
-// każdego. To wykrycie strukturalne, pewne, więc łamie build.
+// dostępu, więc to wykrycie pewne i łamie build. permission_callback ustawiony
+// na __return_true na trasie tylko do odczytu (GET) to zwykle świadomie
+// publiczne dane, więc go pomijamy. Na trasie zmieniającej dane (POST, PUT,
+// PATCH, DELETE) to heurystyka, która tylko ostrzega.
 import { walk } from '../parser';
 import {
   arrayItems,
@@ -10,6 +12,7 @@ import {
   entryKeyName,
   findEntry,
   nodeStart,
+  offsetName,
   type AnyNode,
 } from './ast-utils';
 import type { Finding, FileContext, Rule } from './types';
@@ -34,6 +37,36 @@ function endpointConfigs(argsArray: AnyNode): AnyNode[] {
     if (val && val.kind === 'array' && isEndpointConfig(val)) nested.push(val);
   }
   return nested;
+}
+
+// Metody HTTP z wpisu 'methods'. Brak wpisu oznacza GET (domyślnie w WordPressie).
+const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'READABLE']);
+
+function methodNames(value: unknown, out: string[]): void {
+  const v = asNode(value);
+  if (!v) return;
+  if (v.kind === 'string' && typeof v.value === 'string') {
+    for (const part of v.value.split(',')) out.push(part.trim().toUpperCase());
+  } else if (v.kind === 'staticlookup') {
+    // WP_REST_Server::READABLE, ::CREATABLE, ::EDITABLE, ::DELETABLE, ::ALLMETHODS
+    const nm = offsetName(v.offset);
+    if (nm) out.push(nm.toUpperCase());
+  } else if (v.kind === 'array') {
+    for (const e of arrayItems(v)) methodNames(e.value, out);
+  } else if (v.kind === 'bin') {
+    methodNames(v.left, out);
+    methodNames(v.right, out);
+  } else {
+    out.push('?'); // nieznane wyrażenie, traktujemy jak zmieniające dane
+  }
+}
+
+function isReadOnly(cfg: AnyNode): boolean {
+  const entry = findEntry(cfg, 'methods');
+  if (!entry) return true;
+  const names: string[] = [];
+  methodNames(entry.value, names);
+  return names.length > 0 && names.every((m) => READ_ONLY_METHODS.has(m));
 }
 
 function isReturnTrue(value: unknown): boolean {
@@ -63,7 +96,6 @@ export const restPermissionRule: Rule = {
         const loc = nodeStart(cfg) ?? nodeStart(n);
         const base = {
           ruleId: restPermissionRule.id,
-          confidence: 'firm' as const,
           file: ctx.file,
           line: loc?.line ?? 1,
           column: loc?.column ?? 0,
@@ -74,16 +106,18 @@ export const restPermissionRule: Rule = {
           findings.push({
             ...base,
             severity: 'high',
+            confidence: 'firm',
             message:
               'register_rest_route bez permission_callback. Endpoint REST jest dostępny bez kontroli uprawnień.',
             fix: 'Dodaj permission_callback i sprawdź uprawnienia, np. current_user_can albo weryfikację nonce. Dla endpointu celowo publicznego ustaw to świadomie.',
           });
-        } else if (isReturnTrue(permission.value)) {
+        } else if (isReturnTrue(permission.value) && !isReadOnly(cfg)) {
           findings.push({
             ...base,
             severity: 'medium',
+            confidence: 'heuristic',
             message:
-              'permission_callback ustawiony na __return_true. Endpoint REST jest otwarty dla każdego.',
+              'permission_callback ustawiony na __return_true na trasie zmieniającej dane. Endpoint REST jest otwarty dla każdego.',
             fix: 'Jeśli endpoint ma być publiczny, zostaw to świadomie. W innym wypadku sprawdź uprawnienia przez current_user_can albo weryfikację nonce.',
           });
         }

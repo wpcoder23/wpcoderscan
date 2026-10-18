@@ -4,9 +4,12 @@
 // sprawdzamy, czy w ciele jest weryfikacja nonce oraz sprawdzenie zdolności.
 // Haki nopriv obsługują niezalogowanych, więc wymagamy tam tylko nonce.
 // Analiza jest jednoplikowa i nie zagląda w wywołane dalej funkcje, dlatego
-// to heurystyka, która tylko ostrzega.
+// to heurystyka, która tylko ostrzega. Żeby ograniczyć fałszywe alarmy,
+// zgłaszamy tylko uchwyty, które zmieniają stan (zapis opcji, użytkownika,
+// wpisu, pliku albo bazy), i pomijamy te, które wołają pomocnika o nazwie
+// sugerującej sprawdzenie nonce lub uprawnień.
 import { walk } from '../parser';
-import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
+import { asNode, calledName, callArgs, nodeStart, offsetName, type AnyNode } from './ast-utils';
 import type { Finding, FileContext, Rule } from './types';
 
 const NONCE_FUNCS = new Set(['check_admin_referer', 'check_ajax_referer', 'wp_verify_nonce']);
@@ -17,7 +20,78 @@ const CAP_FUNCS = new Set([
   'user_can',
 ]);
 
+// Funkcje zmieniające stan serwisu. Uchwyt bez żadnej z nich zwykle tylko czyta.
+const STATE_CHANGING = new Set([
+  'update_option', 'add_option', 'delete_option', 'update_site_option', 'add_site_option',
+  'delete_site_option', 'set_transient', 'delete_transient', 'set_site_transient',
+  'delete_site_transient', 'wp_insert_user', 'wp_update_user', 'wp_delete_user', 'wp_create_user',
+  'wp_set_password', 'wp_set_auth_cookie', 'update_user_meta', 'add_user_meta', 'delete_user_meta',
+  'wp_insert_post', 'wp_update_post', 'wp_delete_post', 'wp_trash_post', 'wp_untrash_post',
+  'update_post_meta', 'add_post_meta', 'delete_post_meta', 'wp_set_object_terms',
+  'wp_insert_term', 'wp_update_term', 'wp_delete_term', 'wp_insert_comment', 'wp_delete_comment',
+  'activate_plugin', 'deactivate_plugins', 'delete_plugins', 'switch_theme', 'wp_schedule_event',
+  'wp_clear_scheduled_hook', 'wp_mail', 'unlink', 'file_put_contents', 'move_uploaded_file',
+  'rename', 'copy', 'mkdir', 'rmdir', 'wp_delete_file', 'wp_handle_upload', 'wp_delete_attachment',
+]);
+
+// Metody $wpdb, które piszą do bazy.
+const WPDB_WRITES = new Set(['query', 'insert', 'update', 'delete', 'replace']);
+
+// Pomocnicy o takich nazwach najpewniej sprawdzają nonce albo uprawnienia.
+const GUARD_NAME = /nonce|referer|security|verify|permission|authori[sz]|capabilit|user_can|is_user_logged_in|current_user|auth/i;
+
 const SKIP_KEYS = new Set(['loc', 'leadingComments', 'trailingComments']);
+
+// Nazwa wołanej metody ($obj->metoda, Klasa::metoda) niezależnie od obiektu.
+function methodCallName(n: AnyNode): string | undefined {
+  if (n.kind !== 'call') return undefined;
+  const callee = asNode(n.what);
+  if (!callee) return undefined;
+  if (callee.kind === 'propertylookup' || callee.kind === 'staticlookup') {
+    return offsetName(callee.offset);
+  }
+  return undefined;
+}
+
+function isWpdbWrite(n: AnyNode): boolean {
+  const callee = asNode(n.what);
+  if (!callee || callee.kind !== 'propertylookup') return false;
+  const base = asNode(callee.what);
+  const method = offsetName(callee.offset);
+  return !!base && base.kind === 'variable' && base.name === 'wpdb' && !!method && WPDB_WRITES.has(method);
+}
+
+interface BodyFacts {
+  changesState: boolean;
+  callsGuardHelper: boolean;
+}
+
+// Jeden przebieg po ciele uchwytu zbiera fakty potrzebne do decyzji.
+function inspectBody(node: unknown, facts: BodyFacts): void {
+  if (Array.isArray(node)) {
+    for (const n of node as unknown[]) inspectBody(n, facts);
+    return;
+  }
+  const n = asNode(node);
+  if (!n) return;
+  if (n.kind === 'call') {
+    const fn = calledName(n);
+    if (fn) {
+      if (STATE_CHANGING.has(fn)) facts.changesState = true;
+      if (!NONCE_FUNCS.has(fn) && !CAP_FUNCS.has(fn) && GUARD_NAME.test(fn)) {
+        facts.callsGuardHelper = true;
+      }
+    } else {
+      const m = methodCallName(n);
+      if (m && GUARD_NAME.test(m)) facts.callsGuardHelper = true;
+      if (isWpdbWrite(n)) facts.changesState = true;
+    }
+  }
+  for (const k of Object.keys(n)) {
+    if (SKIP_KEYS.has(k)) continue;
+    inspectBody(n[k], facts);
+  }
+}
 
 type HookKind = 'priv' | 'nopriv';
 
@@ -123,6 +197,10 @@ export const nonceCapabilityRule: Rule = {
         body = fn.body;
       }
       if (!body) continue;
+
+      const facts: BodyFacts = { changesState: false, callsGuardHelper: false };
+      inspectBody(body, facts);
+      if (!facts.changesState || facts.callsGuardHelper) continue;
 
       if (!containsCall(body, NONCE_FUNCS)) {
         emit(
