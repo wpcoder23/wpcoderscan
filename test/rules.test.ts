@@ -16,6 +16,8 @@ const unserVulnerable = join(here, 'fixtures', 'vulnerable', 'unserialize.php');
 const unserSafe = join(here, 'fixtures', 'safe', 'unserialize_safe.php');
 const regSettingVulnerable = join(here, 'fixtures', 'vulnerable', 'register_setting.php');
 const regSettingSafe = join(here, 'fixtures', 'safe', 'register_setting_safe.php');
+const xssVulnerable = join(here, 'fixtures', 'vulnerable', 'xss.php');
+const xssSafe = join(here, 'fixtures', 'safe', 'xss_safe.php');
 
 describe('reguła SQL injection', () => {
   it('wykrywa niezabezpieczone zapytania $wpdb', async () => {
@@ -103,6 +105,23 @@ describe('reguła register_setting', () => {
     const r = await scan(regSettingSafe, {});
     const s = r.findings.filter((f) => f.ruleId === 'wp.option.no_sanitize_callback');
     expect(s).toHaveLength(0);
+    expect(r.errors).toHaveLength(0);
+  });
+});
+
+describe('reguła XSS echo/print', () => {
+  it('wykrywa superglobal w echo i print bez ucieczki', async () => {
+    const r = await scan(xssVulnerable, {});
+    const xss = r.findings.filter((f) => f.ruleId === 'wp.xss.echo_superglobal');
+    expect(xss).toHaveLength(4);
+    expect(xss.every((f) => f.severity === 'high' && f.confidence === 'heuristic')).toBe(true);
+    expect(r.errors).toHaveLength(0);
+  });
+
+  it('nie zgłasza danych po ucieczce, sanitizacji lub rzutowaniu', async () => {
+    const r = await scan(xssSafe, {});
+    const xss = r.findings.filter((f) => f.ruleId === 'wp.xss.echo_superglobal');
+    expect(xss).toHaveLength(0);
     expect(r.errors).toHaveLength(0);
   });
 });

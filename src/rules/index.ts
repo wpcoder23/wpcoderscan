@@ -6,6 +6,7 @@ import { rceRule } from './rce';
 import { unserializeRule } from './unserialize';
 import { registerSettingRule } from './register-setting';
 import { secretsRule } from './secrets';
+import { xssEchoRule } from './xss';
 
 export const allRules: Rule[] = [
   sqliRule,
@@ -14,4 +15,5 @@ export const allRules: Rule[] = [
   unserializeRule,
   registerSettingRule,
   secretsRule,
+  xssEchoRule,
 ];
