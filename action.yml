@@ -1,0 +1,55 @@
+name: 'WPCoderScaner'
+description: 'Skaner bezpieczeństwa kodu WordPress i PHP. Skanuje kod przed wydaniem i wysyła wyniki do zakładki Security.'
+author: 'WPCODER sp. z o.o.'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Ścieżka do skanowania (katalog wtyczki, motywu albo repozytorium).'
+    required: false
+    default: '.'
+  fail-on:
+    description: 'Poziom, od którego akcja kończy się błędem: critical, high, medium, low albo none.'
+    required: false
+    default: 'high'
+  strict:
+    description: 'Gdy true, do kodu wyjścia liczą się też znaleziska heurystyczne.'
+    required: false
+    default: 'false'
+  version:
+    description: 'Wersja pakietu npm wpcoderscaner.'
+    required: false
+    default: 'latest'
+  upload-sarif:
+    description: 'Gdy true, wyślij raport SARIF do zakładki Security (wymaga uprawnienia security-events: write).'
+    required: false
+    default: 'true'
+  sarif-file:
+    description: 'Ścieżka pliku SARIF z wynikiem.'
+    required: false
+    default: 'wpcoderscaner.sarif'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Skan i raport SARIF
+      shell: bash
+      run: |
+        STRICT=""
+        if [ "${{ inputs.strict }}" = "true" ]; then STRICT="--strict"; fi
+        npx --yes "wpcoderscaner@${{ inputs.version }}" "${{ inputs.path }}" \
+          --sarif $STRICT --fail-on "${{ inputs.fail-on }}" > "${{ inputs.sarif-file }}"
+
+    - name: Wyślij SARIF do zakładki Security
+      if: ${{ always() && inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
