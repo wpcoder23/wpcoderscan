@@ -26,6 +26,14 @@ export interface ScanResult {
   errors: ScanError[];
 }
 
+// Zamienia surowy błąd na czytelny komunikat. Przepełnienie stosu zdarza się
+// tylko na patologicznie głęboko zagnieżdżonym kodzie, nie na realnych plikach.
+function describeError(e: unknown): string {
+  const msg = (e as Error)?.message ?? String(e);
+  if (/call stack/i.test(msg)) return 'plik zbyt głęboko zagnieżdżony, pominięto';
+  return msg;
+}
+
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 0,
   high: 1,
@@ -59,7 +67,7 @@ export async function scan(target: string, opts: ScanOptions = {}): Promise<Scan
     try {
       ast = parsePhp(code, rel);
     } catch (e) {
-      errors.push({ file: rel, message: `błąd parsowania: ${(e as Error).message}` });
+      errors.push({ file: rel, message: `błąd parsowania: ${describeError(e)}` });
       continue;
     }
 
@@ -83,7 +91,7 @@ export async function scan(target: string, opts: ScanOptions = {}): Promise<Scan
         }
         findings.push(...ruleFindings);
       } catch (e) {
-        errors.push({ file: rel, message: `reguła ${rule.id} rzuciła wyjątek: ${(e as Error).message}` });
+        errors.push({ file: rel, message: `reguła ${rule.id}: ${describeError(e)}` });
       }
     }
   }
