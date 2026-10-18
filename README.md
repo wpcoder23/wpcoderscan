@@ -76,7 +76,7 @@ Wstrzyknięcia SQL, RCE, brak kontroli dostępu i zaszyte sekrety skaner celowo 
 
 ## GitHub Action
 
-Skan na każdym push i pull request, z wynikami w zakładce Security. Akcja buduje skaner ze źródeł repozytorium w wersji wskazanej tagiem, więc nie wymaga pakietu npm. Gotowy przykład jest w `examples/github-workflow.yml`. Minimalny workflow:
+Skan na każdym push i pull request, z wynikami w zakładce Security. Akcja buduje skaner ze źródeł repozytorium w wersji wskazanej tagiem, więc nie wymaga pakietu npm. Gotowy przykład jest w `examples/github-workflow.yml`. Pokaz na żywo, z wynikami w zakładce Security: [wpcoder23/wpcoderscan-demo](https://github.com/wpcoder23/wpcoderscan-demo). Minimalny workflow:
 
 ```yaml
 permissions:
