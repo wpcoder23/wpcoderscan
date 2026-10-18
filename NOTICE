@@ -41,6 +41,5 @@ portions follows and continues to apply to the adapted code.
 ---
 
 The WordPress and PHP detection rules, the PHP file collector and parser
-integration, the compliance mapping (OWASP ASVS, EU CRA), and the active
-"attack my own site" module are original work in this project, licensed under
-the Apache License, Version 2.0.
+integration, and the OWASP ASVS and CWE mapping are original work in this
+project, licensed under the Apache License, Version 2.0.

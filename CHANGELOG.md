@@ -1,5 +1,14 @@
 # Historia zmian
 
+## 0.3.2
+
+Pierwsze wydanie w rejestrze npm.
+
+- Pakiet instalujesz przez `npx wpcoderscan` albo `npm i -g wpcoderscan`.
+- Usunięty alias binarki `wpcs`. Kolidował z istniejącym pakietem npm o tej nazwie. Zostaje komenda `wpcoderscan`.
+- Plik `NOTICE` nie wymienia już funkcji, których nie ma w kodzie (mapowanie CRA i moduł aktywny).
+- Opis pakietu jest dwujęzyczny, żeby pakiet był łatwiejszy do znalezienia w rejestrze.
+
 ## 0.3.1
 
 Mniej fałszywych alarmów.

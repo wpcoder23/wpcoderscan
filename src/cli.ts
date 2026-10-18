@@ -59,7 +59,6 @@ function parseArgs(argv: string[]): Args {
 const HELP = `WPCoderScan - skaner bezpieczeństwa kodu WordPress i PHP
 
 Użycie:
-  wpcs <ścieżka> [opcje]
   wpcoderscan <ścieżka> [opcje]
 
 Opcje:

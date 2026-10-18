@@ -1,12 +1,27 @@
 # WPCoderScan
 
+[![npm](https://img.shields.io/npm/v/wpcoderscan.svg)](https://www.npmjs.com/package/wpcoderscan)
+
 Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję. Narzędzie dla deweloperów, vendorów i agencji, na czasy kodu generowanego przez AI.
 
-Status: wczesny etap (v0.3.1). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
+Status: wczesny etap (v0.3.2). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
 Wymagany Node.js 18 lub nowszy. Skaner nie uruchamia kodu PHP. Czyta i parsuje pliki, więc można go bezpiecznie puścić na cudzym kodzie.
+
+```bash
+npx wpcoderscan ./sciezka-do-wtyczki
+```
+
+Możesz też zainstalować go globalnie:
+
+```bash
+npm i -g wpcoderscan
+wpcoderscan ./sciezka-do-wtyczki
+```
+
+Wersję sprawdzisz przez `--version`. Ten sam skaner uruchomisz też prosto z GitHuba, bez pakietu npm:
 
 ```bash
 npx github:wpcoder23/wpcoderscan ./sciezka-do-wtyczki
@@ -20,8 +35,6 @@ cd wpcoderscan
 npm install
 node dist/cli.js ./sciezka-do-wtyczki --json
 ```
-
-Po instalacji dostępna jest też krótsza komenda `wpcs`. Wersję sprawdzisz przez `--version`.
 
 ## Co wykrywa
 
@@ -60,7 +73,7 @@ Skaner pomija katalogi `vendor`, `vendor-prefixed`, `node_modules`, `.git`, `dis
 
 Każde znalezisko ma poziom pewności. Znaleziska **pewne** (firm) są strukturalnie jednoznaczne i łamią build. Znaleziska **heurystyczne** mogą dać fałszywy alarm, więc domyślnie tylko ostrzegają i nie wywalają CI. Flaga `--strict` sprawia, że do kodu wyjścia liczą się też heurystyki.
 
-`wpcs` zwraca kod `1`, gdy znajdzie podatność o poziomie wskazanym w `--fail-on` (domyślnie `high`) lub cięższym, z uwzględnieniem powyższej zasady pewności. Dzięki temu wpina się w CI jako bramka. Kod `2` oznacza błąd działania skanera.
+`wpcoderscan` zwraca kod `1`, gdy znajdzie podatność o poziomie wskazanym w `--fail-on` (domyślnie `high`) lub cięższym, z uwzględnieniem powyższej zasady pewności. Dzięki temu wpina się w CI jako bramka. Kod `2` oznacza błąd działania skanera.
 
 ## Ograniczenia
 
@@ -104,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.3.1
+      - uses: wpcoder23/wpcoderscan@v0.3.2
         with:
           path: .
           fail-on: high
