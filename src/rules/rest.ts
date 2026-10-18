@@ -3,41 +3,16 @@
 // dostępu. permission_callback ustawiony na __return_true otwiera go dla
 // każdego. To wykrycie strukturalne, pewne, więc łamie build.
 import { walk } from '../parser';
-import type { Finding, FileContext, Position, PhpNode, Rule } from './types';
-
-type AnyNode = Record<string, unknown> & { kind?: string };
-
-function asNode(v: unknown): AnyNode | undefined {
-  return v && typeof v === 'object' ? (v as AnyNode) : undefined;
-}
-
-function nodeStart(node: AnyNode | undefined): Position | undefined {
-  const loc = node?.loc as { start?: Position } | undefined;
-  return loc?.start;
-}
-
-// Nazwa wołanej funkcji, jeśli węzeł to proste wywołanie po nazwie.
-function calledName(node: AnyNode): string | undefined {
-  if (node.kind !== 'call') return undefined;
-  const what = asNode(node.what);
-  if (what && what.kind === 'name' && typeof what.name === 'string') return what.name;
-  return undefined;
-}
-
-// Elementy tablicy (array literal) jako lista węzłów entry.
-function arrayItems(node: unknown): AnyNode[] {
-  const n = asNode(node);
-  if (!n || n.kind !== 'array') return [];
-  const items = Array.isArray(n.items) ? (n.items as unknown[]) : [];
-  return items.map(asNode).filter((e): e is AnyNode => !!e);
-}
-
-// Nazwa klucza w entry, gdy klucz jest literałem tekstowym.
-function entryKeyName(entry: AnyNode): string | undefined {
-  const k = asNode(entry.key);
-  if (k && k.kind === 'string' && typeof k.value === 'string') return k.value;
-  return undefined;
-}
+import {
+  arrayItems,
+  asNode,
+  calledName,
+  entryKeyName,
+  findEntry,
+  nodeStart,
+  type AnyNode,
+} from './ast-utils';
+import type { Finding, FileContext, Rule } from './types';
 
 const ENDPOINT_KEYS = new Set(['methods', 'callback', 'permission_callback']);
 
@@ -47,10 +22,6 @@ function isEndpointConfig(arr: AnyNode): boolean {
     const k = entryKeyName(e);
     return !!k && ENDPOINT_KEYS.has(k);
   });
-}
-
-function findEntry(arr: AnyNode, keyName: string): AnyNode | undefined {
-  return arrayItems(arr).find((e) => entryKeyName(e) === keyName);
 }
 
 // Lista tablic konfiguracji endpointów w trzecim argumencie.

@@ -3,25 +3,10 @@
 // w których argument SQL powstaje z interpolacji lub sklejania ze zmienną.
 // Pomija interpolację nazw tabel ($wpdb->posts itp.) oraz $wpdb->prepare().
 import { walk } from '../parser';
-import type { Finding, FileContext, Position, PhpNode, Rule, Severity } from './types';
+import { asNode, baseVariable, nodeStart, offsetName, SUPERGLOBALS, type AnyNode } from './ast-utils';
+import type { Finding, FileContext, Rule, Severity } from './types';
 
 const SINKS = new Set(['query', 'get_results', 'get_row', 'get_col', 'get_var']);
-const SUPERGLOBALS = new Set(['_GET', '_POST', '_REQUEST', '_COOKIE', '_SERVER', '_FILES']);
-
-type AnyNode = Record<string, unknown> & { kind?: string };
-
-function asNode(v: unknown): AnyNode | undefined {
-  return v && typeof v === 'object' ? (v as AnyNode) : undefined;
-}
-
-// Nazwa metody albo właściwości (offset w propertylookup).
-function offsetName(offset: unknown): string | undefined {
-  const o = asNode(offset);
-  if (!o) return undefined;
-  if (typeof o.name === 'string') return o.name;
-  if (typeof o.value === 'string') return o.value;
-  return undefined;
-}
 
 function isWpdbVar(node: unknown): boolean {
   const n = asNode(node);
@@ -46,13 +31,6 @@ function isPrepareCall(node: unknown): boolean {
 function isWpdbProp(node: unknown): boolean {
   const n = asNode(node);
   return !!n && n.kind === 'propertylookup' && isWpdbVar(n.what);
-}
-
-// Zejdź po łańcuchu offsetlookup do zmiennej bazowej, np. $_GET['a']['b'] -> $_GET.
-function baseVariable(node: unknown): AnyNode | undefined {
-  let b = asNode(node);
-  while (b && b.kind === 'offsetlookup') b = asNode(b.what);
-  return b;
 }
 
 interface RiskPart {
@@ -106,12 +84,6 @@ function collectRisky(node: unknown, acc: RiskPart[]): void {
         collectRisky(n[k], acc);
       }
   }
-}
-
-// Pozycja startowa węzła, jeśli parser ją zapisał.
-function nodeStart(node: AnyNode | undefined): Position | undefined {
-  const loc = node?.loc as { start?: Position } | undefined;
-  return loc?.start;
 }
 
 function severityFor(arg: AnyNode, risky: RiskPart[]): Severity {
