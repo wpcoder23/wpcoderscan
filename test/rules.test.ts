@@ -213,11 +213,18 @@ describe('reguła sekretów', () => {
     const firm = r.findings.filter(
       (f) => f.ruleId === 'wp.secret.hardcoded' && f.confidence === 'firm',
     );
-    // AWS, Stripe, GitHub, Google, klucz prywatny.
-    expect(firm).toHaveLength(5);
-    expect(firm.filter((f) => f.severity === 'critical')).toHaveLength(4);
-    expect(firm.filter((f) => f.severity === 'high')).toHaveLength(1);
+    // AWS, Stripe, GitHub, klucz prywatny. Klucz Google to heurystyka.
+    expect(firm).toHaveLength(4);
+    expect(firm.every((f) => f.severity === 'critical')).toBe(true);
     expect(r.errors).toHaveLength(0);
+  });
+
+  it('klucz Google jest heurystyką, bo bywa publiczny z założenia', async () => {
+    const r = await scan(file, { cwd: dir });
+    const google = r.findings.filter((f) => f.ruleId === 'wp.secret.hardcoded' && f.message.includes('Google'));
+    expect(google).toHaveLength(1);
+    expect(google[0].confidence).toBe('heuristic');
+    expect(google[0].severity).toBe('high');
   });
 
   it('zgłasza sekrety po nazwie jako heurystykę i pomija atrapy', async () => {
@@ -225,8 +232,8 @@ describe('reguła sekretów', () => {
     const heur = r.findings.filter(
       (f) => f.ruleId === 'wp.secret.hardcoded' && f.confidence === 'heuristic',
     );
-    // DB_PASSWORD i $api_key, bez YOUR_API_KEY_HERE i changeme.
-    expect(heur).toHaveLength(2);
-    expect(heur.every((f) => f.severity === 'medium')).toBe(true);
+    // DB_PASSWORD i $api_key, bez YOUR_API_KEY_HERE i changeme. Do tego klucz Google.
+    expect(heur.filter((f) => f.severity === 'medium')).toHaveLength(2);
+    expect(heur).toHaveLength(3);
   });
 });

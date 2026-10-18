@@ -6,6 +6,7 @@
 // skażenia. To celowo ostrożne podejście: wolimy przeoczyć niż zalać
 // użytkownika fałszywymi alarmami. Analizę między funkcjami zostawiamy na Pro.
 import { asNode, baseVariable, calledName, offsetName, SUPERGLOBALS, type AnyNode } from './ast-utils';
+import { guardedNames } from './guards';
 import type { PhpNode } from './types';
 
 export interface TaintHit {
@@ -329,6 +330,17 @@ interface TaintEvent {
   expr: unknown;
   compound: boolean;
   key?: string; // zdarzenie dotyczy elementu names[0][key], nie całej zmiennej
+  guarded?: ReadonlySet<string>; // zmienne sprawdzone listą dozwolonych wartości przed tym miejscem
+}
+
+// Środowisko, w którym sprawdzone zmienne uchodzą za czyste.
+function withGuard(env: Env, guarded: ReadonlySet<string> | undefined): Env {
+  if (!guarded || guarded.size === 0) return env;
+  return {
+    origin: (name) => (guarded.has(name) ? 'none' : env.origin(name)),
+    originKey: (name, key) => (guarded.has(name) ? 'none' : env.originKey(name, key)),
+    isRequestVar: (name) => !guarded.has(name) && env.isRequestVar(name),
+  };
 }
 
 function keyName(name: string, key: string): string {
@@ -345,14 +357,19 @@ function startOffset(node: unknown): number {
   return loc?.start?.offset ?? Number.MAX_SAFE_INTEGER;
 }
 
-function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[]): void {
+function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: AnyNode[] = []): void {
   if (Array.isArray(node)) {
-    for (const e of node as unknown[]) collectEvents(e, root, out);
+    for (const e of node as unknown[]) collectEvents(e, root, out, anc);
     return;
   }
   const n = asNode(node);
   if (!n || typeof n.kind !== 'string') return;
   if (n !== root && SCOPE_KINDS.has(n.kind)) return; // zagnieżdżony zakres ma własny stan
+
+  const guardHere = (): ReadonlySet<string> | undefined => {
+    const g = guardedNames(anc, startOffset(n));
+    return g.size > 0 ? g : undefined;
+  };
 
   if (n.kind === 'assign') {
     const left = asNode(n.left);
@@ -366,6 +383,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[]): void {
           names: [target.name],
           expr: n.right,
           compound: isElement || !plain,
+          guarded: guardHere(),
         });
         // Elementy o literalnych kluczach śledzimy osobno, żeby jeden skażony
         // element nie skażał całej tablicy przy odczycie innego klucza.
@@ -374,7 +392,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[]): void {
           const innerNode = asNode(left.what);
           const key = literalKey(left.offset);
           if (innerNode && innerNode.kind === 'variable' && key !== undefined) {
-            out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: n.right, compound: !plain, key });
+            out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: n.right, compound: !plain, key, guarded: guardHere() });
           }
         } else if (plain && right && right.kind === 'array') {
           const items = Array.isArray(right.items) ? (right.items as unknown[]) : [];
@@ -382,7 +400,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[]): void {
             const entry = asNode(it);
             const key = entry ? literalKey(entry.key) : undefined;
             if (entry && key !== undefined) {
-              out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: entry.value, compound: false, key });
+              out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: entry.value, compound: false, key, guarded: guardHere() });
             }
           }
         }
@@ -398,21 +416,23 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[]): void {
         const key = literalKey(asNode(it)?.key);
         if (key !== undefined && /^[A-Za-z_]\w*$/.test(key)) names.push(key);
       }
-      if (names.length) out.push({ off: endOffset(n), names, expr: inner, compound: false });
+      if (names.length) out.push({ off: endOffset(n), names, expr: inner, compound: false, guarded: guardHere() });
     }
   } else if (n.kind === 'foreach') {
     const names: string[] = [];
     for (const v of [asNode(n.key), asNode(n.value)]) {
       if (v && v.kind === 'variable' && typeof v.name === 'string') names.push(v.name);
     }
-    if (names.length) out.push({ off: endOffset(asNode(n.source)), names, expr: n.source, compound: false });
+    if (names.length) out.push({ off: endOffset(asNode(n.source)), names, expr: n.source, compound: false, guarded: guardHere() });
   }
 
+  anc.push(n);
   for (const k of Object.keys(n)) {
     if (SKIP_KEYS.has(k)) continue;
     const v = n[k];
-    if (v && typeof v === 'object') collectEvents(v, root, out);
+    if (v && typeof v === 'object') collectEvents(v, root, out, anc);
   }
+  anc.pop();
 }
 
 interface Scoped {
@@ -487,7 +507,7 @@ function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped 
     isRequestVar: (name) => requests.has(name) && (current.get(name) ?? 'none') === 'none',
   };
   for (const ev of events) {
-    const hit = evalTaint(ev.expr, spec, env);
+    const hit = evalTaint(ev.expr, spec, withGuard(env, ev.guarded));
     let incoming: Origin = 'none';
     if (hit.direct) incoming = 'superglobal';
     else if (hit.viaVar) incoming = hit.source ?? 'superglobal';
@@ -584,12 +604,22 @@ export class TaintAnalyzer {
     }
     const off = startOffset(at ?? expr);
     const s = scoped;
-    return evalTaint(expr, this.spec, {
-      origin: (name) => originAt(s, name, off),
-      originKey: (name, key) => originKeyAt(s, name, key, off),
-      // Zmienna żądania traci ten status po nadpisaniu przez przypisanie.
-      isRequestVar: (name) => s.requests.has(name) && !s.history.has(name),
-    });
+    // Przodkowie od zakresu w dół, bo sprawdzenie poza funkcją niczego w niej nie potwierdza.
+    const from = stack.lastIndexOf(scope as PhpNode);
+    const guarded = guardedNames(from >= 0 ? stack.slice(from) : stack, off);
+    return evalTaint(
+      expr,
+      this.spec,
+      withGuard(
+        {
+          origin: (name) => originAt(s, name, off),
+          originKey: (name, key) => originKeyAt(s, name, key, off),
+          // Zmienna żądania traci ten status po nadpisaniu przez przypisanie.
+          isRequestVar: (name) => s.requests.has(name) && !s.history.has(name),
+        },
+        guarded,
+      ),
+    );
   }
 }
 

@@ -17,6 +17,16 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Test e2e CLI: podatne próbki łamią build, bezpieczne przechodzą, --extended działa.
+      - name: Smoke CLI
+        run: |
+          code=0
+          node dist/cli.js test/fixtures/vulnerable --json > /dev/null || code=$?
+          test "$code" = "1"
+          node dist/cli.js test/fixtures/safe --fail-on high
+          code=0
+          node dist/cli.js test/fixtures/vulnerable --extended --json > /dev/null || code=$?
+          test "$code" = "1"
 
   # Sprawdza, że akcja z action.yml buduje skaner i przechodzi na bezpiecznych próbkach.
   action:

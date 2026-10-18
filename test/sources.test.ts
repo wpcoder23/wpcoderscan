@@ -439,3 +439,19 @@ function helper( $atts ) {
     expect(f).toHaveLength(0);
   });
 });
+
+describe('unserialize z ograniczoną listą klas', () => {
+  it('lista klas obniża zgłoszenie do heurystyki, a false je usuwa', async () => {
+    const f = await findingsFor(`<?php
+function a() {
+	$one = unserialize( base64_decode( $_POST['d'] ), array( 'allowed_classes' => array( 'Foo' ) ) );
+	$two = unserialize( base64_decode( $_POST['d'] ), array( 'allowed_classes' => false ) );
+	$three = unserialize( $_POST['d'] );
+}`);
+    const u = f.filter((x) => x.ruleId === 'wp.unserialize.user_input');
+    expect(u).toHaveLength(2);
+    const limited = u.find((x) => x.confidence === 'heuristic');
+    expect(limited?.severity).toBe('medium');
+    expect(u.filter((x) => x.confidence === 'firm')).toHaveLength(1);
+  });
+});

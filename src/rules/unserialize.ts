@@ -26,6 +26,14 @@ function blocksObjects(arg: AnyNode | undefined): boolean {
   return !!value && value.kind === 'boolean' && value.value === false;
 }
 
+// allowed_classes ustawione na listę klas. Ryzyko jest mniejsze, ale zostaje, jeśli któraś z klas ma metody magiczne.
+function restrictsClasses(arg: AnyNode | undefined): boolean {
+  if (!arg || arg.kind !== 'array') return false;
+  const entry = findEntry(arg, 'allowed_classes');
+  const value = asNode(entry?.value);
+  return !!value && value.kind === 'array';
+}
+
 // Dopisuje allowed_classes => false przed nawiasem zamykającym jednoargumentowego unserialize().
 function buildPatch(ctx: FileContext, node: AnyNode): Patch | undefined {
   const end = (node.loc as { end?: { offset?: number } } | undefined)?.end?.offset;
@@ -63,13 +71,16 @@ export const unserializeRule: Rule = {
       if (!info.hasSuperglobal) return; // pewne tylko przy bezpośrednim superglobalu
       if (name === 'unserialize' && blocksObjects(args[1])) return; // obiekty już zablokowane
       const patch = name === 'unserialize' && args.length === 1 ? buildPatch(ctx, n) : undefined;
+      const limited = name === 'unserialize' && restrictsClasses(args[1]);
 
       const loc = nodeStart(n);
       findings.push({
         ruleId: unserializeRule.id,
-        severity: 'high',
-        confidence: 'firm',
-        message: `${name}() na danych z superglobala. Grozi wstrzyknięciem obiektu PHP (object injection).`,
+        severity: limited ? 'medium' : 'high',
+        confidence: limited ? 'heuristic' : 'firm',
+        message: limited
+          ? `${name}() na danych z superglobala z ograniczoną listą klas. Sprawdź, czy żadna z nich nie ma metod magicznych, które można nadużyć.`
+          : `${name}() na danych z superglobala. Grozi wstrzyknięciem obiektu PHP (object injection).`,
         file: ctx.file,
         line: loc?.line ?? 1,
         column: loc?.column ?? 0,

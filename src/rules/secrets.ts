@@ -11,6 +11,9 @@ interface ProviderPattern {
   re: RegExp;
   severity: Severity;
   label: string;
+  // Domyślnie pewne. Heurystyka tylko ostrzega i nie łamie build.
+  confidence?: 'firm' | 'heuristic';
+  note?: string;
 }
 
 // Wzorce znanych dostawców. Dobrane tak, żeby trafiać w realne klucze,
@@ -19,7 +22,15 @@ const PROVIDER_PATTERNS: ProviderPattern[] = [
   { re: /\bAKIA[0-9A-Z]{16}\b/, severity: 'critical', label: 'klucz dostępu AWS' },
   { re: /\b(?:sk|rk)_live_[0-9a-zA-Z]{24,}\b/, severity: 'critical', label: 'klucz Stripe (live)' },
   { re: /\bgh[pousr]_[0-9A-Za-z]{36,}\b/, severity: 'critical', label: 'token GitHub' },
-  { re: /\bAIza[0-9A-Za-z_-]{35}\b/, severity: 'high', label: 'klucz API Google' },
+  // Klucze Google do map w przeglądarce bywają publiczne z założenia, a ten sam format
+  // mają klucze płatnych API. Nie da się tego rozstrzygnąć z kodu, więc tylko ostrzegamy.
+  {
+    re: /\bAIza[0-9A-Za-z_-]{35}\b/,
+    severity: 'high',
+    label: 'klucz API Google',
+    confidence: 'heuristic',
+    note: ' Klucz do map w przeglądarce bywa publiczny z założenia, ale ten sam format mają klucze płatnych API. Sprawdź w konsoli Google, czy klucz ma ograniczenia.',
+  },
   { re: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/, severity: 'high', label: 'token Slack' },
   // Sam nagłówek PEM to zwykle tekst parsera. Klucz to nagłówek i treść base64.
   { re: /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----\s*[A-Za-z0-9+/=\s]{40,}/, severity: 'critical', label: 'klucz prywatny' },
@@ -108,7 +119,7 @@ export const secretsRule: Rule = {
       // Przebieg dostawców na każdym literale tekstowym.
       if (n.kind === 'string' && typeof n.value === 'string') {
         const hit = matchProvider(n.value);
-        if (hit) emit(n, hit.severity, 'firm', `Wykryto ${hit.label} zaszyty w kodzie.`);
+        if (hit) emit(n, hit.severity, hit.confidence ?? 'firm', `Wykryto ${hit.label} zaszyty w kodzie.${hit.note ?? ''}`);
         return;
       }
 
