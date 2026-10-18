@@ -6,3 +6,5 @@ export type { Score } from './engine/score';
 export { allRules } from './rules';
 export type { Finding, Rule, Severity, FileContext, PhpNode } from './rules/types';
 export { renderTerminal } from './report/terminal';
+export { renderSarif, buildSarif } from './report/sarif';
+export type { SarifLog } from './report/sarif';

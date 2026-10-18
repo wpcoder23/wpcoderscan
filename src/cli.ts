@@ -2,6 +2,7 @@
 // Wejście CLI dla WPCoderScaner.
 import { scan } from './index';
 import { renderTerminal } from './report/terminal';
+import { renderSarif } from './report/sarif';
 import type { Severity } from './rules/types';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -9,16 +10,25 @@ const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info']
 interface Args {
   target: string;
   json: boolean;
+  sarif: boolean;
   failOn: Severity | 'none';
   strict: boolean;
   help: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { target: '', json: false, failOn: 'high', strict: false, help: false };
+  const args: Args = {
+    target: '',
+    json: false,
+    sarif: false,
+    failOn: 'high',
+    strict: false,
+    help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') args.json = true;
+    else if (a === '--sarif') args.sarif = true;
     else if (a === '--strict') args.strict = true;
     else if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--fail-on') args.failOn = (argv[++i] as Severity) ?? 'high';
@@ -35,6 +45,7 @@ Użycie:
 
 Opcje:
   --json              wypisz wynik jako JSON
+  --sarif             wypisz wynik jako SARIF 2.1.0 (do zakładki Security GitHuba)
   --fail-on <poziom>  kod wyjścia 1, gdy jest znalezisko tego poziomu lub cięższe
                       (critical, high, medium, low, none; domyślnie high)
   --strict            licz też znaleziska heurystyczne do kodu wyjścia
@@ -51,7 +62,9 @@ async function main(): Promise<void> {
 
   const result = await scan(args.target, { cwd: process.cwd() });
 
-  if (args.json) {
+  if (args.sarif) {
+    process.stdout.write(renderSarif(result));
+  } else if (args.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   } else {
     process.stdout.write(renderTerminal(result));
