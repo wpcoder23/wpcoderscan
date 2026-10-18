@@ -34,7 +34,7 @@ function sevColor(s: Severity): string {
 export function renderTerminal(r: ScanResult): string {
   const out: string[] = [];
   out.push('');
-  out.push(c(C.bold, `WPCoderScaner  skan: ${r.target}`));
+  out.push(c(C.bold, `WPCoderScan  skan: ${r.target}`));
   out.push(c(C.gray, `plików: ${r.filesScanned}, znalezisk: ${r.findings.length}`));
   out.push('');
 

@@ -1,11 +1,10 @@
-# Przykładowy workflow GitHub Actions dla WPCoderScaner.
+# Przykładowy workflow GitHub Actions dla WPCoderScan.
 # Skopiuj ten plik do .github/workflows/ w swoim repozytorium wtyczki lub motywu.
 #
-# Wariant niżej używa pakietu npm wprost (npx), więc działa niezależnie od tego,
-# gdzie opublikowana jest akcja z Marketplace. Krótszy wariant z akcją composite
-# jest na końcu pliku, w komentarzu.
+# Akcja buduje skaner ze źródeł wskazanego tagu, więc nie wymaga pakietu npm.
+# Przypnij konkretny tag albo SHA, żeby wynik skanu był powtarzalny.
 
-name: Skan bezpieczeństwa WPCoderScaner
+name: Skan bezpieczeństwa WPCoderScan
 
 on:
   push:
@@ -21,29 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # Przy znalezisku pewnym na poziomie high lub wyższym krok kończy się
+      # błędem i oblewa check. SARIF trafia do zakładki Security także wtedy.
+      - uses: wpcoder23/wpcoderscan@v0.1.0
         with:
-          node-version: '20'
-
-      # Skan zapisuje SARIF i ustawia kod wyjścia bramki. Przy znalezisku pewnym
-      # na poziomie high lub wyższym krok kończy się błędem i oblewa check.
-      - name: Skan i raport SARIF
-        run: npx --yes wpcoderscaner . --sarif --fail-on high > wpcoderscaner.sarif
-
-      # if: always() sprawia, że SARIF trafia do zakładki Security także wtedy,
-      # gdy bramka wyżej oblała build.
-      - name: Wyślij SARIF do zakładki Security
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: wpcoderscaner.sarif
-
-# Krótszy wariant, gdy akcja jest opublikowana w Marketplace.
-# Zastąp OWNER/REPO oraz tag wersji właściwą ścieżką repozytorium akcji.
-#
-#      - uses: actions/checkout@v4
-#      - uses: OWNER/REPO@v1
-#        with:
-#          path: .
-#          fail-on: high
-#          strict: 'false'
+          path: .
+          fail-on: high
+          strict: 'false'

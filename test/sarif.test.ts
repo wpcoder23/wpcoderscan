@@ -16,7 +16,7 @@ describe('raport SARIF', () => {
     expect(sarif.$schema).toContain('sarif');
     expect(sarif.runs).toHaveLength(1);
     const run = sarif.runs[0];
-    expect(run.tool.driver.name).toBe('WPCoderScaner');
+    expect(run.tool.driver.name).toBe('WPCoderScan');
     expect(run.tool.driver.rules).toHaveLength(allRules.length);
     expect(run.results).toHaveLength(r.findings.length);
   });

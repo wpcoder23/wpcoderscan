@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Wejście CLI dla WPCoderScaner.
+// Wejście CLI dla WPCoderScan.
 import { scan, type ScanResult } from './index';
 import { renderTerminal } from './report/terminal';
 import { renderSarif } from './report/sarif';
 import { gitChangedPhpFiles } from './collector/git';
 import type { Severity } from './rules/types';
+import { VERSION } from './version';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 
@@ -16,6 +17,7 @@ interface Args {
   strict: boolean;
   diff: string | null;
   help: boolean;
+  version: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -27,6 +29,7 @@ function parseArgs(argv: string[]): Args {
     strict: false,
     diff: null,
     help: false,
+    version: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -34,6 +37,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--sarif') args.sarif = true;
     else if (a === '--strict') args.strict = true;
     else if (a === '--help' || a === '-h') args.help = true;
+    else if (a === '--version' || a === '-v') args.version = true;
     else if (a === '--fail-on') args.failOn = (argv[++i] as Severity) ?? 'high';
     else if (a === '--diff') args.diff = argv[++i] ?? 'HEAD';
     else if (!a.startsWith('-') && !args.target) args.target = a;
@@ -41,11 +45,11 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-const HELP = `WPCoderScaner - skaner bezpieczeństwa kodu WordPress i PHP
+const HELP = `WPCoderScan - skaner bezpieczeństwa kodu WordPress i PHP
 
 Użycie:
   wpcs <ścieżka> [opcje]
-  wpcoderscaner <ścieżka> [opcje]
+  wpcoderscan <ścieżka> [opcje]
 
 Opcje:
   --json              wypisz wynik jako JSON
@@ -56,11 +60,16 @@ Opcje:
                       (domyślnie build łamią tylko znaleziska pewne)
   --diff <ref>        skanuj tylko pliki PHP zmienione wobec ref gita
                       (domyślnie HEAD; szybki skan dla pull requestów)
+  -v, --version       pokaż wersję
   -h, --help          ta pomoc
 `;
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (args.version) {
+    process.stdout.write(`${VERSION}\n`);
+    process.exit(0);
+  }
   if (args.help || (!args.target && args.diff === null)) {
     process.stdout.write(HELP);
     process.exit(args.help ? 0 : 1);

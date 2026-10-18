@@ -1,4 +1,4 @@
-// Publiczne API biblioteki WPCoderScaner.
+// Publiczne API biblioteki WPCoderScan.
 export { scan } from './engine';
 export type { ScanOptions, ScanResult, ScanError } from './engine';
 export { scoreFindings } from './engine/score';

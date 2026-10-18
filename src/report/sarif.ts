@@ -7,11 +7,10 @@ import { createHash } from 'node:crypto';
 import { allRules } from '../rules';
 import type { Confidence, Finding, Severity } from '../rules/types';
 import type { ScanResult } from '../engine';
+import { VERSION } from '../version';
 
-// Wersja narzędzia. Trzymać zgodnie z package.json.
-const TOOL_VERSION = '0.1.0';
-const TOOL_NAME = 'WPCoderScaner';
-const INFO_URI = 'https://www.npmjs.com/package/wpcoderscaner';
+const TOOL_NAME = 'WPCoderScan';
+const INFO_URI = 'https://github.com/wpcoder23/wpcoderscan';
 const SARIF_SCHEMA = 'https://json.schemastore.org/sarif-2.1.0.json';
 
 type SarifLevel = 'error' | 'warning' | 'note' | 'none';
@@ -168,7 +167,7 @@ export function buildSarif(result: ScanResult): SarifLog {
           driver: {
             name: TOOL_NAME,
             informationUri: INFO_URI,
-            version: TOOL_VERSION,
+            version: VERSION,
             rules,
           },
         },
