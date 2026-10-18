@@ -18,6 +18,8 @@ const regSettingVulnerable = join(here, 'fixtures', 'vulnerable', 'register_sett
 const regSettingSafe = join(here, 'fixtures', 'safe', 'register_setting_safe.php');
 const xssVulnerable = join(here, 'fixtures', 'vulnerable', 'xss.php');
 const xssSafe = join(here, 'fixtures', 'safe', 'xss_safe.php');
+const nonceVulnerable = join(here, 'fixtures', 'vulnerable', 'nonce_capability.php');
+const nonceSafe = join(here, 'fixtures', 'safe', 'nonce_capability_safe.php');
 
 describe('reguła SQL injection', () => {
   it('wykrywa niezabezpieczone zapytania $wpdb', async () => {
@@ -122,6 +124,27 @@ describe('reguła XSS echo/print', () => {
     const r = await scan(xssSafe, {});
     const xss = r.findings.filter((f) => f.ruleId === 'wp.xss.echo_superglobal');
     expect(xss).toHaveLength(0);
+    expect(r.errors).toHaveLength(0);
+  });
+});
+
+describe('reguła nonce i uprawnień', () => {
+  it('wykrywa brak nonce i brak sprawdzenia uprawnień w uchwytach akcji', async () => {
+    const r = await scan(nonceVulnerable, {});
+    const a = r.findings.filter((f) => f.ruleId === 'wp.auth.unprotected_action');
+    const noNonce = a.filter((f) => (f.cwe ?? []).includes('CWE-352'));
+    const noCap = a.filter((f) => (f.cwe ?? []).includes('CWE-862'));
+    // delete_item i domknięcie nie mają nonce. Trzy uchwyty nie mają uprawnień.
+    expect(noNonce).toHaveLength(2);
+    expect(noCap).toHaveLength(3);
+    expect(a.every((f) => f.severity === 'high' && f.confidence === 'heuristic')).toBe(true);
+    expect(r.errors).toHaveLength(0);
+  });
+
+  it('nie zgłasza uchwytów z kontrolami ani callbacków metod', async () => {
+    const r = await scan(nonceSafe, {});
+    const a = r.findings.filter((f) => f.ruleId === 'wp.auth.unprotected_action');
+    expect(a).toHaveLength(0);
     expect(r.errors).toHaveLength(0);
   });
 });

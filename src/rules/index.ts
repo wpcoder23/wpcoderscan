@@ -7,6 +7,7 @@ import { unserializeRule } from './unserialize';
 import { registerSettingRule } from './register-setting';
 import { secretsRule } from './secrets';
 import { xssEchoRule } from './xss';
+import { nonceCapabilityRule } from './nonce-capability';
 
 export const allRules: Rule[] = [
   sqliRule,
@@ -16,4 +17,5 @@ export const allRules: Rule[] = [
   registerSettingRule,
   secretsRule,
   xssEchoRule,
+  nonceCapabilityRule,
 ];
