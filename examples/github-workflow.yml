@@ -22,7 +22,7 @@ jobs:
 
       # Przy znalezisku pewnym na poziomie high lub wyższym krok kończy się
       # błędem i oblewa check. SARIF trafia do zakładki Security także wtedy.
-      - uses: wpcoder23/wpcoderscan@v0.1.0
+      - uses: wpcoder23/wpcoderscan@v0.2.0
         with:
           path: .
           fail-on: high

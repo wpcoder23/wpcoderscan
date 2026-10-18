@@ -2,7 +2,7 @@
 
 Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję. Narzędzie dla deweloperów, vendorów i agencji, na czasy kodu generowanego przez AI.
 
-Status: wczesny etap (v0.1.0). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
+Status: wczesny etap (v0.2.0). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.1.0
+      - uses: wpcoder23/wpcoderscan@v0.2.0
         with:
           path: .
           fail-on: high
