@@ -10,6 +10,7 @@ import { scoreFindings, type Score } from './score';
 export interface ScanOptions extends CollectOptions {
   rules?: Rule[];
   cwd?: string; // do liczenia ścieżek względnych
+  files?: string[]; // jawna lista plików do skanu, pomija kolektor (tryb diff)
 }
 
 export interface ScanError {
@@ -36,7 +37,8 @@ const SEVERITY_ORDER: Record<string, number> = {
 export async function scan(target: string, opts: ScanOptions = {}): Promise<ScanResult> {
   const cwd = opts.cwd ?? process.cwd();
   const rules = opts.rules ?? allRules;
-  const files = await collectPhpFiles(target, opts);
+  // W trybie diff dostajemy gotową listę plików. Inaczej zbiera ją kolektor.
+  const files = opts.files ?? (await collectPhpFiles(target, opts));
   const findings: Finding[] = [];
   const errors: ScanError[] = [];
 

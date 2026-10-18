@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Wejście CLI dla WPCoderScaner.
-import { scan } from './index';
+import { scan, type ScanResult } from './index';
 import { renderTerminal } from './report/terminal';
 import { renderSarif } from './report/sarif';
+import { gitChangedPhpFiles } from './collector/git';
 import type { Severity } from './rules/types';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -13,6 +14,7 @@ interface Args {
   sarif: boolean;
   failOn: Severity | 'none';
   strict: boolean;
+  diff: string | null;
   help: boolean;
 }
 
@@ -23,6 +25,7 @@ function parseArgs(argv: string[]): Args {
     sarif: false,
     failOn: 'high',
     strict: false,
+    diff: null,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -32,6 +35,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--strict') args.strict = true;
     else if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--fail-on') args.failOn = (argv[++i] as Severity) ?? 'high';
+    else if (a === '--diff') args.diff = argv[++i] ?? 'HEAD';
     else if (!a.startsWith('-') && !args.target) args.target = a;
   }
   return args;
@@ -50,17 +54,27 @@ Opcje:
                       (critical, high, medium, low, none; domyślnie high)
   --strict            licz też znaleziska heurystyczne do kodu wyjścia
                       (domyślnie build łamią tylko znaleziska pewne)
+  --diff <ref>        skanuj tylko pliki PHP zmienione wobec ref gita
+                      (domyślnie HEAD; szybki skan dla pull requestów)
   -h, --help          ta pomoc
 `;
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  if (args.help || !args.target) {
+  if (args.help || (!args.target && args.diff === null)) {
     process.stdout.write(HELP);
     process.exit(args.help ? 0 : 1);
   }
 
-  const result = await scan(args.target, { cwd: process.cwd() });
+  const cwd = process.cwd();
+  let result: ScanResult;
+  if (args.diff !== null) {
+    // Tryb diff: skanujemy tylko pliki PHP zmienione wobec ref gita.
+    const files = gitChangedPhpFiles(args.diff, cwd);
+    result = await scan(`diff:${args.diff}`, { cwd, files });
+  } else {
+    result = await scan(args.target, { cwd });
+  }
 
   if (args.sarif) {
     process.stdout.write(renderSarif(result));
