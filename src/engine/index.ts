@@ -2,9 +2,10 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { collectPhpFiles, type CollectOptions } from '../collector';
-import { parsePhp } from '../parser';
 import { allRules } from '../rules';
-import type { Finding, FileContext, PhpNode, Rule } from '../rules/types';
+import type { Finding, Rule } from '../rules/types';
+import { analyzeSource, type ScanError } from './analyze';
+import { resolvePatches } from '../fix/verify';
 import { scoreFindings, type Score } from './score';
 
 export interface ScanOptions extends CollectOptions {
@@ -13,10 +14,7 @@ export interface ScanOptions extends CollectOptions {
   files?: string[]; // jawna lista plików do skanu, pomija kolektor (tryb diff)
 }
 
-export interface ScanError {
-  file: string;
-  message: string;
-}
+export type { ScanError };
 
 export interface ScanResult {
   target: string;
@@ -24,14 +22,6 @@ export interface ScanResult {
   findings: Finding[];
   score: Score;
   errors: ScanError[];
-}
-
-// Zamienia surowy błąd na czytelny komunikat. Przepełnienie stosu zdarza się
-// tylko na patologicznie głęboko zagnieżdżonym kodzie, nie na realnych plikach.
-function describeError(e: unknown): string {
-  const msg = (e as Error)?.message ?? String(e);
-  if (/call stack/i.test(msg)) return 'plik zbyt głęboko zagnieżdżony, pominięto';
-  return msg;
 }
 
 const SEVERITY_ORDER: Record<string, number> = {
@@ -63,37 +53,11 @@ export async function scan(target: string, opts: ScanOptions = {}): Promise<Scan
       continue;
     }
 
-    let ast: PhpNode;
-    try {
-      ast = parsePhp(code, rel);
-    } catch (e) {
-      errors.push({ file: rel, message: `błąd parsowania: ${describeError(e)}` });
-      continue;
-    }
-
-    const lines = code.split(/\r?\n/);
-    const ctx: FileContext = {
-      file: rel,
-      absolutePath: abs,
-      code,
-      lines,
-      ast,
-      snippetAt(line: number) {
-        return (lines[line - 1] ?? '').trim();
-      },
-    };
-
-    for (const rule of rules) {
-      try {
-        const ruleFindings = rule.check(ctx);
-        for (const f of ruleFindings) {
-          if (!f.snippet) f.snippet = ctx.snippetAt(f.line);
-        }
-        findings.push(...ruleFindings);
-      } catch (e) {
-        errors.push({ file: rel, message: `reguła ${rule.id}: ${describeError(e)}` });
-      }
-    }
+    const analysis = analyzeSource(rel, abs, code, rules);
+    errors.push(...analysis.errors);
+    // Podpowiedzi napraw przechodzą bramki: parse, ponowny skan, brak konfliktów.
+    resolvePatches({ rel, abs, code, before: analysis.findings, rules });
+    findings.push(...analysis.findings);
   }
 
   // Najcięższe najpierw, potem po pliku i linii.

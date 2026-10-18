@@ -1,5 +1,6 @@
 // Raport w terminalu. Bez zależności, kolory przez kody ANSI.
 import type { ScanResult } from '../engine';
+import { previewPatch, readSource } from '../fix/suggest';
 import type { Severity } from '../rules/types';
 
 const C = {
@@ -31,8 +32,19 @@ function sevColor(s: Severity): string {
   return C.blue;
 }
 
-export function renderTerminal(r: ScanResult): string {
+export interface TerminalOptions {
+  suggest?: boolean; // pokaż podgląd podpowiedzi napraw przy znaleziskach
+  cwd?: string; // do odczytu plików przy podglądzie
+}
+
+export function renderTerminal(r: ScanResult, opts: TerminalOptions = {}): string {
   const out: string[] = [];
+  const cwd = opts.cwd ?? process.cwd();
+  const sources = new Map<string, string | null>();
+  const source = (file: string): string | null => {
+    if (!sources.has(file)) sources.set(file, readSource(cwd, file));
+    return sources.get(file) ?? null;
+  };
   out.push('');
   out.push(c(C.bold, `WPCoderScan  skan: ${r.target}`));
   out.push(c(C.gray, `plików: ${r.filesScanned}, znalezisk: ${r.findings.length}`));
@@ -46,6 +58,14 @@ export function renderTerminal(r: ScanResult): string {
     out.push(`  ${f.message}`);
     if (f.snippet) out.push(c(C.gray, `    ${f.snippet}`));
     if (f.fix) out.push(c(C.green, `    naprawa: ${f.fix}`));
+    if (opts.suggest && f.patch) {
+      const note = f.patch.safety === 'manual' ? ' (do decyzji)' : '';
+      out.push(c(C.green, `    podpowiedź${note}: ${f.patch.label}`));
+      const code = source(f.file);
+      for (const line of code ? previewPatch(code, f.patch) : []) {
+        out.push(c(line.startsWith('-') ? C.red : C.green, `      ${line}`));
+      }
+    }
     out.push('');
   }
 
@@ -60,6 +80,12 @@ export function renderTerminal(r: ScanResult): string {
     out.push('');
     out.push(c(C.gray, `błędy skanera: ${r.errors.length}`));
     for (const e of r.errors) out.push(c(C.gray, `  ${e.file}: ${e.message}`));
+  }
+
+  const withPatch = r.findings.filter((f) => f.patch).length;
+  if (withPatch > 0 && !opts.suggest) {
+    out.push('');
+    out.push(c(C.gray, `podpowiedzi napraw: ${withPatch} (pokaż je opcją --suggest)`));
   }
 
   out.push('');

@@ -15,6 +15,22 @@ export interface Position {
   offset?: number;
 }
 
+// Jedna zmiana tekstu pliku. Offsety to indeksy UTF-16 w oryginalnej treści pliku,
+// zgodne z pozycjami z parsera. Przedział [start, end) jest zastępowany tekstem replacement.
+export interface TextEdit {
+  start: number;
+  end: number;
+  replacement: string;
+}
+
+// Podpowiedź naprawy. 'complete' to zmiana, którą można zastosować bez dalszej
+// pracy (po przeglądzie). 'manual' wymaga decyzji człowieka, np. doboru kontekstu.
+export interface Patch {
+  safety: 'complete' | 'manual';
+  label: string; // po polsku, krótki opis zmiany
+  edits: TextEdit[];
+}
+
 // Pojedyncze znalezisko zgłaszane przez regułę.
 export interface Finding {
   ruleId: string;
@@ -29,6 +45,7 @@ export interface Finding {
   cwe?: string[]; // np. ['CWE-89']
   asvs?: string[]; // np. ['5.3.4']
   fix?: string; // krótka wskazówka naprawy, po polsku
+  patch?: Patch; // konkretna zmiana kodu, gdy da się ją wyliczyć i zweryfikować
 }
 
 // Węzeł AST z php-parser. Trzymamy luźny typ, bo biblioteka nie daje pełnych typów.

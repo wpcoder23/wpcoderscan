@@ -50,12 +50,29 @@ Każde znalezisko ma poziom pewności. Znaleziska **pewne** (firm) są struktura
 
 Analiza danych działa w obrębie jednej funkcji. Nie śledzi przepływu między funkcjami ani plikami i nie zna własnych funkcji czyszczących projektu. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
 
+## Podpowiedzi napraw
+
+Dla dwóch reguł skaner umie podać gotową zmianę kodu: XSS w `echo` i `print` oraz `unserialize` na danych od użytkownika. Skaner niczego nie zapisuje w twoich plikach. Pokazuje zmianę albo zapisuje ją jako łatkę, a decyzja należy do ciebie.
+
+- `--suggest` pokazuje przy znalezisku, co zmienić, jako linie przed i po.
+- `--patch naprawy.patch` zapisuje wszystkie pełne podpowiedzi jako łatkę. Uruchom skan z katalogu głównego repozytorium, a potem: `git apply --check naprawy.patch && git apply naprawy.patch`.
+- JSON zawiera pole `patch` przy znalezisku, a SARIF zawiera pole `fixes`.
+
+Skaner dobiera funkcję ucieczki do miejsca w HTML. W treści strony to `esc_html()`, w atrybucie w cudzysłowie `esc_attr()`, a w całym adresie `href` albo `src` `esc_url()`. Przy `unserialize` dopisuje `allowed_classes => false`. Zachowuje styl pliku: spacje w nawiasach, `array()` albo `[]`, końce linii CRLF.
+
+Każdą podpowiedź skaner sprawdza przed pokazaniem. Nakłada zmianę w pamięci, parsuje kod ponownie, skanuje go jeszcze raz i odrzuca podpowiedź, gdy znalezisko nie znika albo pojawia się nowe. Odrzuca ją także, gdy plik ma błędy składni.
+
+Podpowiedzi nie dostaje nic, co wymaga decyzji o kontekście: skrypty, style, atrybuty zdarzeń, wartości bez cudzysłowu i adres, w którym dane stoją na początku, a dalej jest ciąg dalszy. Podpowiedź oznaczona jako "do decyzji" pojawia się tylko w `--suggest`. Nie trafia do łatki. Tak jest, gdy kontekstu HTML nie widać w kodzie, a skaner proponuje wtedy `esc_html()`.
+
+Wstrzyknięcia SQL, RCE, brak kontroli dostępu i zaszyte sekrety skaner celowo nie naprawia sam, bo poprawna zmiana zależy od projektu.
+
 ## Formaty wyjścia
 
 - Terminal (domyślnie), czytelny raport z oceną.
 - `--json`, do dalszego przetwarzania.
 - `--sarif`, format SARIF 2.1.0 do zakładki Security w GitHub.
 - `--diff <ref>`, skan tylko plików PHP zmienionych wobec ref gita (szybki skan dla pull requestów).
+- `--suggest` i `--patch <plik>`, podpowiedzi napraw (opisane wyżej).
 
 ## GitHub Action
 

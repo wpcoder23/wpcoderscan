@@ -21,6 +21,18 @@ interface SarifRegion {
   endLine?: number;
 }
 
+interface SarifFix {
+  description: { text: string };
+  artifactChanges: Array<{
+    artifactLocation: { uri: string };
+    replacements: Array<{
+      deletedRegion: { charOffset: number; charLength: number };
+      insertedContent: { text: string };
+    }>;
+  }>;
+  properties: { safety: string };
+}
+
 interface SarifResult {
   ruleId: string;
   ruleIndex?: number;
@@ -34,6 +46,7 @@ interface SarifResult {
   }>;
   properties: Record<string, unknown>;
   partialFingerprints: Record<string, string>;
+  fixes?: SarifFix[];
 }
 
 interface SarifRuleDescriptor {
@@ -152,6 +165,24 @@ export function buildSarif(result: ScanResult): SarifLog {
       },
       partialFingerprints: { wpcsFingerprint: fingerprint(f) },
     };
+
+    if (f.patch) {
+      res.fixes = [
+        {
+          description: { text: f.patch.label },
+          artifactChanges: [
+            {
+              artifactLocation: { uri: f.file },
+              replacements: f.patch.edits.map((e) => ({
+                deletedRegion: { charOffset: e.start, charLength: e.end - e.start },
+                insertedContent: { text: e.replacement },
+              })),
+            },
+          ],
+          properties: { safety: f.patch.safety },
+        },
+      ];
+    }
 
     const idx = ruleIndex.get(f.ruleId);
     if (idx !== undefined) res.ruleIndex = idx;
