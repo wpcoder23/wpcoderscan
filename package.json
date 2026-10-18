@@ -20,8 +20,12 @@
     "wpcs": "dist/cli.js"
   },
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
     "dist",
@@ -34,6 +38,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "dev": "tsx src/cli.ts",
     "scan": "tsx src/cli.ts",
     "test": "vitest run",
