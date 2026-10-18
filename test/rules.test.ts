@@ -194,7 +194,7 @@ describe('reguła sekretów', () => {
       "$password = 'changeme';",
       "$password_label = 'Podaj hasło do konta';",
       "$bypass = 'abcdefgh123456';",
-      "$token_url = 'https://example.com/path/12345678';",
+      "$accessTokenURL = 'https://api.provider.org/oauth/token/12345678';",
       '',
     ].join('\n');
     dir = mkdtempSync(join(tmpdir(), 'wpcs-sec-'));

@@ -34,6 +34,7 @@ const IDENTIFIER_LIKE = /^[A-Za-z_][\w-]*$/;
 
 // Wartość wygląda jak token: bez spacji, bez cudzysłowów, co najmniej litera i cyfra.
 function looksLikeToken(value: string): boolean {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false; // adres URL, nie sekret
   return value.length >= 12 && !/\s/.test(value) && /[A-Za-z]/.test(value) && /\d/.test(value);
 }
 
