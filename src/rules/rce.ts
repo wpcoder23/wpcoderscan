@@ -7,7 +7,7 @@
 // wtyczki nie jest zgłaszane, bo tak działa większość szablonów w WordPressie.
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
-import { CODE_SPEC, EXEC_SPEC, INCLUDE_SPEC, TaintAnalyzer, type TaintHit } from './taint';
+import { CODE_SPEC, EXEC_SPEC, INCLUDE_SPEC, originText, TaintAnalyzer, type TaintHit } from './taint';
 import type { Confidence, Finding, FileContext, PhpNode, Rule, Severity } from './types';
 
 // Funkcje uruchamiające polecenia systemowe.
@@ -63,9 +63,9 @@ export const rceRule: Rule = {
       hit: TaintHit,
       critical: Severity,
     ): { sev: Severity; conf: Confidence; from: string } | null => {
-      if (hit.direct) return { sev: critical, conf: 'firm', from: 'z superglobala' };
+      if (hit.direct) return { sev: critical, conf: 'firm', from: 'od użytkownika' };
       if (hit.viaVar) {
-        return { sev: 'high', conf: 'heuristic', from: `ze zmiennej $${hit.via ?? ''} zasilonej superglobalem` };
+        return { sev: 'high', conf: 'heuristic', from: `ze zmiennej $${hit.via ?? ''} zasilonej danymi ${originText(hit)}` };
       }
       return null;
     };
@@ -74,13 +74,17 @@ export const rceRule: Rule = {
       let direct = false;
       let viaVar = false;
       let via: string | undefined;
+      let source: TaintHit['source'];
       for (const a of callArgs(n)) {
         const h = analyzer.analyze(a, stack, n);
         direct = direct || h.direct;
         viaVar = viaVar || h.viaVar;
-        via = via ?? h.via;
+        if (via === undefined && h.via !== undefined) {
+          via = h.via;
+          source = h.source;
+        }
       }
-      return { direct, viaVar, via };
+      return { direct, viaVar, via, source };
     };
 
     walk(ctx.ast, (node, stack) => {

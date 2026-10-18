@@ -155,7 +155,10 @@ describe('reguła nonce i uprawnień', () => {
     // delete_item i domknięcie nie mają nonce. Trzy uchwyty nie mają uprawnień.
     expect(noNonce).toHaveLength(2);
     expect(noCap).toHaveLength(3);
-    expect(a.every((f) => f.severity === 'high' && f.confidence === 'heuristic')).toBe(true);
+    // Brak uprawnień przy obecnym nonce to poziom średni (atak tylko zalogowanym użytkownikiem).
+    expect(noNonce.every((f) => f.severity === 'high')).toBe(true);
+    expect(a.filter((f) => f.severity === 'medium')).toHaveLength(1);
+    expect(a.every((f) => f.confidence === 'heuristic')).toBe(true);
     expect(r.errors).toHaveLength(0);
   });
 

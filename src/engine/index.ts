@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { collectPhpFiles, type CollectOptions } from '../collector';
-import { allRules } from '../rules';
+import { allRules, extendedRules } from '../rules';
 import type { Finding, Rule } from '../rules/types';
 import { analyzeSource, type ScanError } from './analyze';
 import { resolvePatches } from '../fix/verify';
@@ -10,6 +10,7 @@ import { scoreFindings, type Score } from './score';
 
 export interface ScanOptions extends CollectOptions {
   rules?: Rule[];
+  extended?: boolean; // dołącz reguły rozszerzone (większa czułość, więcej fałszywych alarmów)
   cwd?: string; // do liczenia ścieżek względnych
   files?: string[]; // jawna lista plików do skanu, pomija kolektor (tryb diff)
 }
@@ -34,7 +35,7 @@ const SEVERITY_ORDER: Record<string, number> = {
 
 export async function scan(target: string, opts: ScanOptions = {}): Promise<ScanResult> {
   const cwd = opts.cwd ?? process.cwd();
-  const rules = opts.rules ?? allRules;
+  const rules = opts.rules ?? (opts.extended ? [...allRules, ...extendedRules] : allRules);
   // W trybie diff dostajemy gotową listę plików. Inaczej zbiera ją kolektor.
   const files = opts.files ?? (await collectPhpFiles(target, opts));
   const findings: Finding[] = [];

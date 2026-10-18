@@ -3,6 +3,8 @@
 // uchwyt (nazwana funkcja w tym samym pliku albo domknięcie inline) i
 // sprawdzamy, czy w ciele jest weryfikacja nonce oraz sprawdzenie zdolności.
 // Haki nopriv obsługują niezalogowanych, więc wymagamy tam tylko nonce.
+// Uchwyt może być też metodą klasy z tego samego pliku: [ $this, 'metoda' ],
+// [ self::class, 'metoda' ], [ Klasa::class, 'metoda' ] albo 'Klasa::metoda'.
 // Analiza jest jednoplikowa i nie zagląda w wywołane dalej funkcje, dlatego
 // to heurystyka, która tylko ostrzega. Żeby ograniczyć fałszywe alarmy,
 // zgłaszamy tylko uchwyty, które zmieniają stan (zapis opcji, użytkownika,
@@ -10,7 +12,8 @@
 // sugerującej sprawdzenie nonce lub uprawnień.
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, nodeStart, offsetName, type AnyNode } from './ast-utils';
-import type { Finding, FileContext, Rule } from './types';
+import { functionName, resolveMethodCallback, type MethodRef } from './callbacks';
+import type { Finding, FileContext, Rule, Severity } from './types';
 
 const NONCE_FUNCS = new Set(['check_admin_referer', 'check_ajax_referer', 'wp_verify_nonce']);
 const CAP_FUNCS = new Set([
@@ -38,7 +41,7 @@ const STATE_CHANGING = new Set([
 const WPDB_WRITES = new Set(['query', 'insert', 'update', 'delete', 'replace']);
 
 // Pomocnicy o takich nazwach najpewniej sprawdzają nonce albo uprawnienia.
-const GUARD_NAME = /nonce|referer|security|verify|permission|authori[sz]|capabilit|user_can|is_user_logged_in|current_user|auth/i;
+const GUARD_NAME = /nonce|referer|security|verify|permission|permit|authori[sz]|capabilit|user_can|is_user_logged_in|current_user|auth|access|allowed|can_|is_admin|has_cap|before_running/i;
 
 const SKIP_KEYS = new Set(['loc', 'leadingComments', 'trailingComments']);
 
@@ -101,14 +104,6 @@ function classifyHook(hook: string): HookKind | null {
   return null;
 }
 
-function functionName(n: AnyNode): string | undefined {
-  const nm = n.name;
-  if (typeof nm === 'string') return nm;
-  const o = asNode(nm);
-  if (o && typeof o.name === 'string') return o.name;
-  return undefined;
-}
-
 // Czy gdziekolwiek w poddrzewie pada wywołanie jednej z podanych funkcji.
 function containsCall(node: unknown, names: Set<string>): boolean {
   if (Array.isArray(node)) return (node as unknown[]).some((n) => containsCall(n, names));
@@ -129,6 +124,7 @@ interface Handler {
   hook: string;
   kind: HookKind;
   callbackName?: string;
+  methodRef?: MethodRef;
   body?: unknown;
   node: AnyNode;
 }
@@ -143,11 +139,27 @@ export const nonceCapabilityRule: Rule = {
   check(ctx: FileContext): Finding[] {
     const findings: Finding[] = [];
     const functionDefs = new Map<string, AnyNode>();
+    const methodDefs = new Map<string, Map<string, AnyNode>>();
     const handlers: Handler[] = [];
 
-    // Jeden przebieg zbiera definicje funkcji i rejestracje haków.
-    walk(ctx.ast, (node) => {
+    // Jeden przebieg zbiera definicje funkcji i metod oraz rejestracje haków.
+    walk(ctx.ast, (node, stack) => {
       const n = node as AnyNode;
+
+      if (n.kind === 'class' || n.kind === 'trait') {
+        const cname = functionName(n)?.toLowerCase();
+        const members = Array.isArray(n.body) ? (n.body as unknown[]) : [];
+        if (cname) {
+          const methods = methodDefs.get(cname) ?? new Map<string, AnyNode>();
+          for (const m of members) {
+            const mn = asNode(m);
+            const mname = mn && mn.kind === 'method' ? functionName(mn) : undefined;
+            if (mn && mname) methods.set(mname.toLowerCase(), mn);
+          }
+          methodDefs.set(cname, methods);
+        }
+        return;
+      }
 
       if (n.kind === 'function') {
         const nm = functionName(n);
@@ -166,18 +178,21 @@ export const nonceCapabilityRule: Rule = {
       if (!cb) return;
       if (cb.kind === 'closure' || cb.kind === 'arrowfunc') {
         handlers.push({ hook: hookNode.value, kind, body: cb.body ?? cb, node: n });
-      } else if (cb.kind === 'string' && typeof cb.value === 'string') {
+      } else if (cb.kind === 'string' && typeof cb.value === 'string' && !cb.value.includes('::')) {
         handlers.push({ hook: hookNode.value, kind, callbackName: cb.value, node: n });
+      } else {
+        const methodRef = resolveMethodCallback(cb, stack);
+        if (methodRef) handlers.push({ hook: hookNode.value, kind, methodRef, node: n });
       }
-      // Callbacki metod (tablica [$this, 'metoda']) pomijamy, bo bez
-      // rozwiązania nazwy groziłoby to fałszywym alarmem.
+      // Callbacki, których klasy nie da się rozwiązać w tym pliku (na przykład
+      // [ $this->obiekt, 'metoda' ]), pomijamy, bo groziłoby to fałszywym alarmem.
     });
 
-    const emit = (node: AnyNode, message: string, cwe: string[], asvs: string[], fix: string) => {
+    const emit = (node: AnyNode, message: string, cwe: string[], asvs: string[], fix: string, severity: Severity = 'high') => {
       const loc = nodeStart(node);
       findings.push({
         ruleId: nonceCapabilityRule.id,
-        severity: 'high',
+        severity,
         confidence: 'heuristic',
         message,
         file: ctx.file,
@@ -191,6 +206,11 @@ export const nonceCapabilityRule: Rule = {
 
     for (const h of handlers) {
       let body = h.body;
+      if (!body && h.methodRef) {
+        const method = methodDefs.get(h.methodRef.cls)?.get(h.methodRef.method.toLowerCase());
+        if (!method) continue; // klasa albo metoda spoza tego pliku
+        body = method.body;
+      }
       if (!body && h.callbackName) {
         const fn = functionDefs.get(h.callbackName);
         if (!fn) continue; // uchwyt spoza tego pliku, nie oceniamy
@@ -202,7 +222,8 @@ export const nonceCapabilityRule: Rule = {
       inspectBody(body, facts);
       if (!facts.changesState || facts.callsGuardHelper) continue;
 
-      if (!containsCall(body, NONCE_FUNCS)) {
+      const hasNonce = containsCall(body, NONCE_FUNCS);
+      if (!hasNonce) {
         emit(
           h.node,
           `Uchwyt haka "${h.hook}" nie weryfikuje nonce. Grozi CSRF.`,
@@ -219,6 +240,8 @@ export const nonceCapabilityRule: Rule = {
           ['CWE-862'],
           ['4.1.3'],
           'Dodaj current_user_can z właściwą zdolnością na początku uchwytu i przerwij, gdy brak uprawnień.',
+          // Sam nonce zawęża atak do zalogowanych użytkowników (na przykład subskrybentów).
+          hasNonce ? 'medium' : 'high',
         );
       }
     }

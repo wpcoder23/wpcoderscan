@@ -8,6 +8,11 @@ import { registerSettingRule } from './register-setting';
 import { secretsRule } from './secrets';
 import { xssEchoRule } from './xss';
 import { nonceCapabilityRule } from './nonce-capability';
+import { sqliParamRule } from './sqli-param';
+
+// Reguły rozszerzone. Mają większą czułość i więcej fałszywych alarmów, więc
+// działają tylko z opcją extended (--extended w CLI).
+export const extendedRules: Rule[] = [sqliParamRule];
 
 export const allRules: Rule[] = [
   sqliRule,

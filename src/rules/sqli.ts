@@ -8,10 +8,10 @@
 // wtyczkach to prawie zawsze fałszywy alarm.
 import { walk } from '../parser';
 import { asNode, nodeStart, offsetName, type AnyNode } from './ast-utils';
-import { SQL_SPEC, TaintAnalyzer } from './taint';
+import { originText, SQL_SPEC, TaintAnalyzer } from './taint';
 import type { Finding, FileContext, Rule } from './types';
 
-const SINKS = new Set(['query', 'get_results', 'get_row', 'get_col', 'get_var']);
+export const SINKS = new Set(['query', 'get_results', 'get_row', 'get_col', 'get_var']);
 
 function isWpdbVar(node: unknown): boolean {
   const n = asNode(node);
@@ -19,7 +19,7 @@ function isWpdbVar(node: unknown): boolean {
 }
 
 // Zwraca nazwę metody, jeśli węzeł to wywołanie $wpdb->metoda(...).
-function wpdbMethodCall(node: unknown): string | undefined {
+export function wpdbMethodCall(node: unknown): string | undefined {
   const n = asNode(node);
   if (!n || n.kind !== 'call') return undefined;
   const callee = asNode(n.what);
@@ -66,14 +66,14 @@ export const sqliRule: Rule = {
           ...base,
           severity: 'critical',
           confidence: 'firm',
-          message: `Wywołanie $wpdb->${method}() wkleja dane z superglobala do zapytania bez prepare. Grozi SQL injection.`,
+          message: `Wywołanie $wpdb->${method}() wkleja dane od użytkownika do zapytania bez prepare. Grozi SQL injection.`,
         });
       } else {
         findings.push({
           ...base,
           severity: 'high',
           confidence: 'heuristic',
-          message: `Wywołanie $wpdb->${method}() używa zmiennej $${hit.via ?? ''}, która zawiera dane z superglobala, i buduje z niej zapytanie bez prepare. Prawdopodobny SQL injection.`,
+          message: `Wywołanie $wpdb->${method}() używa zmiennej $${hit.via ?? ''}, która zawiera dane ${originText(hit)}, i buduje z niej zapytanie bez prepare. Prawdopodobny SQL injection.`,
         });
       }
     });

@@ -19,6 +19,7 @@ interface Args {
   strict: boolean;
   diff: string | null;
   suggest: boolean;
+  extended: boolean;
   patch: string | null;
   help: boolean;
   version: boolean;
@@ -33,6 +34,7 @@ function parseArgs(argv: string[]): Args {
     strict: false,
     diff: null,
     suggest: false,
+    extended: false,
     patch: null,
     help: false,
     version: false,
@@ -43,6 +45,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--sarif') args.sarif = true;
     else if (a === '--strict') args.strict = true;
     else if (a === '--suggest') args.suggest = true;
+    else if (a === '--extended') args.extended = true;
     else if (a === '--patch') args.patch = argv[++i] ?? null;
     else if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--version' || a === '-v') args.version = true;
@@ -68,6 +71,7 @@ Opcje:
                       (domyślnie build łamią tylko znaleziska pewne)
   --diff <ref>        skanuj tylko pliki PHP zmienione wobec ref gita
                       (domyślnie HEAD; szybki skan dla pull requestów)
+  --extended          dołącz reguły rozszerzone (większa czułość, więcej fałszywych alarmów)
   --suggest           pokaż podpowiedzi napraw przy znaleziskach (nic nie zapisuje)
   --patch <plik>      zapisz pełne podpowiedzi napraw jako łatkę do git apply
   -v, --version       pokaż wersję
@@ -90,9 +94,9 @@ async function main(): Promise<void> {
   if (args.diff !== null) {
     // Tryb diff: skanujemy tylko pliki PHP zmienione wobec ref gita.
     const files = gitChangedPhpFiles(args.diff, cwd);
-    result = await scan(`diff:${args.diff}`, { cwd, files });
+    result = await scan(`diff:${args.diff}`, { cwd, files, extended: args.extended });
   } else {
-    result = await scan(args.target, { cwd });
+    result = await scan(args.target, { cwd, extended: args.extended });
   }
 
   if (args.sarif) {
