@@ -40,7 +40,8 @@ export function renderTerminal(r: ScanResult): string {
 
   for (const f of r.findings) {
     const tag = c(sevColor(f.severity) + C.bold, LABEL[f.severity].padEnd(9));
-    out.push(`${tag} ${c(C.bold, f.ruleId)}`);
+    const conf = f.confidence === 'heuristic' ? c(C.gray, '  heurystyka') : '';
+    out.push(`${tag} ${c(C.bold, f.ruleId)}${conf}`);
     out.push(`  ${f.file}:${f.line}:${f.column}`);
     out.push(`  ${f.message}`);
     if (f.snippet) out.push(c(C.gray, `    ${f.snippet}`));

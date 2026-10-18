@@ -3,6 +3,11 @@
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
+// Poziom pewności reguły. 'firm' to wykrycie strukturalne, pewne, łamie build.
+// 'heuristic' to przesłanka, która może być fałszywym alarmem, więc domyślnie
+// tylko ostrzega i nie wywala CI. Zasada przyjęta za rekomendacją Fable 5.1.
+export type Confidence = 'firm' | 'heuristic';
+
 // Pozycja w pliku. Linie liczone od 1.
 export interface Position {
   line: number;
@@ -14,6 +19,7 @@ export interface Position {
 export interface Finding {
   ruleId: string;
   severity: Severity;
+  confidence: Confidence; // pewne czy heurystyka
   message: string; // po polsku, dla człowieka
   file: string; // ścieżka względna do katalogu skanowania
   line: number;
@@ -47,6 +53,7 @@ export interface Rule {
   id: string; // slug, np. 'wp.sqli.unprepared'
   title: string; // krótki opis po polsku
   severity: Severity; // domyślny poziom
+  confidence: Confidence; // domyślny poziom pewności reguły
   cwe?: string[];
   asvs?: string[];
   check(ctx: FileContext): Finding[];

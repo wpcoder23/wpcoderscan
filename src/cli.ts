@@ -10,14 +10,16 @@ interface Args {
   target: string;
   json: boolean;
   failOn: Severity | 'none';
+  strict: boolean;
   help: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { target: '', json: false, failOn: 'high', help: false };
+  const args: Args = { target: '', json: false, failOn: 'high', strict: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') args.json = true;
+    else if (a === '--strict') args.strict = true;
     else if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--fail-on') args.failOn = (argv[++i] as Severity) ?? 'high';
     else if (!a.startsWith('-') && !args.target) args.target = a;
@@ -35,6 +37,8 @@ Opcje:
   --json              wypisz wynik jako JSON
   --fail-on <poziom>  kod wyjścia 1, gdy jest znalezisko tego poziomu lub cięższe
                       (critical, high, medium, low, none; domyślnie high)
+  --strict            licz też znaleziska heurystyczne do kodu wyjścia
+                      (domyślnie build łamią tylko znaleziska pewne)
   -h, --help          ta pomoc
 `;
 
@@ -55,7 +59,11 @@ async function main(): Promise<void> {
 
   if (args.failOn !== 'none') {
     const threshold = SEVERITY_ORDER.indexOf(args.failOn);
-    const fail = result.findings.some((f) => SEVERITY_ORDER.indexOf(f.severity) <= threshold);
+    const fail = result.findings.some(
+      (f) =>
+        SEVERITY_ORDER.indexOf(f.severity) <= threshold &&
+        (args.strict || f.confidence === 'firm'),
+    );
     process.exit(fail ? 1 : 0);
   }
   process.exit(0);

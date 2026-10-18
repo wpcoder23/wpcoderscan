@@ -124,6 +124,7 @@ export const sqliRule: Rule = {
   id: 'wp.sqli.unprepared',
   title: 'Zapytanie do bazy bez $wpdb->prepare z danymi dynamicznymi',
   severity: 'high',
+  confidence: 'firm',
   cwe: ['CWE-89'],
   asvs: ['5.3.4'],
   check(ctx: FileContext): Finding[] {
@@ -147,6 +148,7 @@ export const sqliRule: Rule = {
       findings.push({
         ruleId: sqliRule.id,
         severity: sev,
+        confidence: 'firm',
         message: `Wywołanie $wpdb->${method}() buduje zapytanie z danych dynamicznych bez prepare. Grozi SQL injection.`,
         file: ctx.file,
         line: loc?.line ?? 1,
