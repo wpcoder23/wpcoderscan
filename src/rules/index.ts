@@ -5,6 +5,7 @@ import { restPermissionRule } from './rest';
 import { rceRule } from './rce';
 import { unserializeRule } from './unserialize';
 import { registerSettingRule } from './register-setting';
+import { secretsRule } from './secrets';
 
 export const allRules: Rule[] = [
   sqliRule,
@@ -12,4 +13,5 @@ export const allRules: Rule[] = [
   rceRule,
   unserializeRule,
   registerSettingRule,
+  secretsRule,
 ];

@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { scan } from '../src/index';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -102,5 +104,61 @@ describe('reguła register_setting', () => {
     const s = r.findings.filter((f) => f.ruleId === 'wp.option.no_sanitize_callback');
     expect(s).toHaveLength(0);
     expect(r.errors).toHaveLength(0);
+  });
+});
+
+describe('reguła sekretów', () => {
+  // Atrapy sekretów składane z kawałków, żeby pełny wzorzec nie trafił do repo.
+  let dir = '';
+  let file = '';
+  beforeAll(() => {
+    const aws = 'AKIA' + 'IOSFODNN7EXAMPLE';
+    const stripe = 'sk_' + 'live_' + '0123456789abcdefABCD1234';
+    const github = 'ghp_' + 'A'.repeat(36);
+    const google = 'AIza' + 'B'.repeat(35);
+    const pem = '-----BEGIN ' + 'RSA PRIVATE KEY' + '-----';
+    const dbPass = 'S3cr3t' + 'Pass' + 'w0rd123';
+    const apiKeyVal = 'abcdef' + 'gh123456';
+    const php = [
+      '<?php',
+      `$a = '${aws}';`,
+      `$b = '${stripe}';`,
+      `$c = '${github}';`,
+      `$d = '${google}';`,
+      `$e = '${pem}';`,
+      `define('DB_PASSWORD', '${dbPass}');`,
+      `$api_key = '${apiKeyVal}';`,
+      "define('API_KEY', 'YOUR_API_KEY_HERE');",
+      "$password = 'changeme';",
+      '',
+    ].join('\n');
+    dir = mkdtempSync(join(tmpdir(), 'wpcs-sec-'));
+    file = join(dir, 'secrets.php');
+    writeFileSync(file, php, 'utf8');
+  });
+  afterAll(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('wykrywa klucze znanych dostawców jako pewne', async () => {
+    const r = await scan(file, { cwd: dir });
+    const firm = r.findings.filter(
+      (f) => f.ruleId === 'wp.secret.hardcoded' && f.confidence === 'firm',
+    );
+    // AWS, Stripe, GitHub, Google, klucz prywatny.
+    expect(firm).toHaveLength(5);
+    expect(firm.filter((f) => f.severity === 'critical')).toHaveLength(4);
+    expect(firm.filter((f) => f.severity === 'high')).toHaveLength(1);
+    expect(r.errors).toHaveLength(0);
+  });
+
+  it('zgłasza sekrety po nazwie jako heurystykę i pomija atrapy', async () => {
+    const r = await scan(file, { cwd: dir });
+    const heur = r.findings.filter(
+      (f) => f.ruleId === 'wp.secret.hardcoded' && f.confidence === 'heuristic',
+    );
+    // DB_PASSWORD i $api_key, bez YOUR_API_KEY_HERE i changeme.
+    expect(heur).toHaveLength(2);
+    expect(heur.every((f) => f.severity === 'medium')).toBe(true);
   });
 });
