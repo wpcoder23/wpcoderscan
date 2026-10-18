@@ -19,6 +19,10 @@ inputs:
     description: 'Gdy true, do kodu wyjścia liczą się też znaleziska heurystyczne.'
     required: false
     default: 'false'
+  extended:
+    description: 'Gdy true, włącz dodatkowe reguły o niższej precyzji (flaga --extended).'
+    required: false
+    default: 'false'
   upload-sarif:
     description: 'Gdy true, wyślij raport SARIF do zakładki Security (wymaga uprawnienia security-events: write).'
     required: false
@@ -49,10 +53,12 @@ runs:
         WPCS_PATH: ${{ inputs.path }}
         WPCS_FAIL_ON: ${{ inputs.fail-on }}
         WPCS_STRICT: ${{ inputs.strict }}
+        WPCS_EXTENDED: ${{ inputs.extended }}
         WPCS_SARIF: ${{ inputs.sarif-file }}
       run: |
         STRICT=""
         if [ "$WPCS_STRICT" = "true" ]; then STRICT="--strict"; fi
+        if [ "$WPCS_EXTENDED" = "true" ]; then STRICT="$STRICT --extended"; fi
         node "${{ github.action_path }}/dist/cli.js" "$WPCS_PATH" \
           --sarif $STRICT --fail-on "$WPCS_FAIL_ON" > "$WPCS_SARIF"
 

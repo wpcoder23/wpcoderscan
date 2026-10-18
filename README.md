@@ -2,7 +2,7 @@
 
 Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję. Narzędzie dla deweloperów, vendorów i agencji, na czasy kodu generowanego przez AI.
 
-Status: wczesny etap (v0.2.0). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
+Status: wczesny etap (v0.3.0). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
@@ -25,7 +25,17 @@ Po instalacji dostępna jest też krótsza komenda `wpcs`. Wersję sprawdzisz pr
 
 ## Co wykrywa
 
-Wersja 0.1 pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w obrębie jednej funkcji. Zmienna przypisana z `$_GET` jest skażona, a po rzutowaniu na liczbę, `absint`, `esc_sql` czy `escapeshellarg` już nie.
+Skaner pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w obrębie jednej funkcji. Zmienna przypisana z `$_GET` jest skażona, a po rzutowaniu na liczbę, `absint`, `esc_sql` czy `escapeshellarg` już nie.
+
+Za dane od użytkownika skaner uznaje:
+
+- superglobale (`$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`, `$_SERVER`, `$_FILES`),
+- `filter_input`, `filter_input_array` bez filtra czyszczącego oraz `php://input`,
+- obiekt żądania REST (`$request->get_param()`, `$request['x']`), jako heurystykę, bo trasa mogła zwalidować argumenty,
+- atrybuty shortcode (`$atts` oraz klucze z `shortcode_atts`), jako źródło zapisanego XSS,
+- `add_query_arg` i `remove_query_arg` bez podanego adresu, w regule XSS.
+
+Elementy tablicy są śledzone po literalnym kluczu, więc `$a['x']` z `$_GET` nie skazi `$a['y']`.
 
 - SQL injection: zapytania `$wpdb` budowane bez `prepare` z danych użytkownika. Superglobal wprost w zapytaniu jest pewny, zmienna zasilona superglobalem to heurystyka.
 - REST: trasa bez `permission_callback` (pewne). `__return_true` na trasie zmieniającej dane (heurystyka). Trasy tylko do odczytu pomijamy.
@@ -33,8 +43,10 @@ Wersja 0.1 pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w 
 - Deserializacja: `unserialize` i `maybe_unserialize` na superglobalu (pewne).
 - Opcje: `register_setting` bez `sanitize_callback` (pewne).
 - Sekrety: klucze dostawców (AWS, Stripe, GitHub, Google, Slack, SendGrid, klucz prywatny z treścią) jako pewne. Wykrycie po nazwie zmiennej jako heurystyka.
-- XSS: dane użytkownika w `echo` albo `print` bez `esc_*`, `wp_kses`, `sanitize_*` ani rzutowania (heurystyka).
-- Nonce i uprawnienia: uchwyty `admin_post_*` i `wp_ajax_*`, które zmieniają stan bez weryfikacji nonce albo bez `current_user_can` (heurystyka).
+- XSS: dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` oraz w wartości zwracanej przez shortcode, bez `esc_*`, `wp_kses`, `sanitize_*` ani rzutowania (heurystyka).
+- Nonce i uprawnienia: uchwyty `admin_post_*` i `wp_ajax_*`, które zmieniają stan bez weryfikacji nonce albo bez `current_user_can` (heurystyka). Uchwytem może być funkcja, domknięcie albo metoda klasy z tego samego pliku. Brak uprawnień przy obecnym nonce to poziom średni, a brak obu zabezpieczeń to wysoki.
+
+Tryb rozszerzony (`--extended`) dodaje regułę `wp.sqli.param_unprepared`: parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących, więc to ostrzeżenie średniego poziomu, domyślnie wyłączone. Tak wygląda wiele historycznych podatności SQL injection, a zarazem sporo bezpiecznego kodu, dlatego trzeba o nią poprosić.
 
 Pełny opis każdej reguły z przykładami podatnego i poprawnego kodu jest w [docs/reguly.md](docs/reguly.md).
 
@@ -50,7 +62,7 @@ Każde znalezisko ma poziom pewności. Znaleziska **pewne** (firm) są struktura
 
 ## Ograniczenia
 
-Analiza danych działa w obrębie jednej funkcji. Nie śledzi przepływu między funkcjami ani plikami i nie zna własnych funkcji czyszczących projektu. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
+Analiza danych działa w obrębie jednej funkcji i jednego pliku. Nie śledzi przepływu między funkcjami ani plikami i nie zna własnych funkcji czyszczących projektu. Callbacki rejestrowane w innym pliku niż ich definicja zostają nierozwiązane. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
 
 ## Podpowiedzi napraw
 
@@ -75,6 +87,7 @@ Wstrzyknięcia SQL, RCE, brak kontroli dostępu i zaszyte sekrety skaner celowo 
 - `--sarif`, format SARIF 2.1.0 do zakładki Security w GitHub.
 - `--diff <ref>`, skan tylko plików PHP zmienionych wobec ref gita (szybki skan dla pull requestów).
 - `--suggest` i `--patch <plik>`, podpowiedzi napraw (opisane wyżej).
+- `--extended`, dodatkowe reguły o niższej precyzji (opisane wyżej).
 
 ## GitHub Action
 
@@ -89,10 +102,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.2.0
+      - uses: wpcoder23/wpcoderscan@v0.3.0
         with:
           path: .
           fail-on: high
+          # extended: 'true'   # dodatkowe reguły o niższej precyzji
 ```
 
 ## Licencja

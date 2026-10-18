@@ -1,5 +1,17 @@
 # Historia zmian
 
+## 0.3.0
+
+Więcej źródeł danych i lepsze wykrywanie na historycznych podatnościach.
+
+- Nowe źródła danych od użytkownika: `filter_input` bez filtra czyszczącego, `php://input`, obiekt żądania REST (heurystyka), `add_query_arg` i `remove_query_arg` bez adresu (XSS) oraz atrybuty shortcode (zapisany XSS).
+- Elementy tablicy są śledzone po literalnym kluczu. `$a['x']` z `$_GET` nie skazi już `$a['y']`.
+- XSS: nowe ujścia `printf`, `vprintf`, `die`, `exit`, `wp_die` oraz `return` w callbacku shortcode. Odpowiedzi `json_encode` w tych ujściach są pomijane.
+- Uchwyty `wp_ajax_*` i `admin_post_*` mogą być metodami klasy z tego samego pliku. Brak uprawnień przy obecnym nonce ma teraz poziom średni, brak nonce poziom wysoki.
+- Nowa flaga `--extended` i wejście `extended` w akcji GitHub. Włącza regułę `wp.sqli.param_unprepared` (parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`).
+- Walidacja na 465 wersjach wtyczek z publicznie znanymi podatnościami: trafienia blisko linii podatności wzrosły dla SQL injection z 8 do 42, dla XSS z 35 do 102 i dla zapisanego XSS z 4 do 44.
+- Hałas na 253 realnych wtyczkach i motywach nadal 0 awarii. Nowe znaleziska to głównie średnie heurystyki.
+
 ## 0.2.0
 
 Podpowiedzi napraw.

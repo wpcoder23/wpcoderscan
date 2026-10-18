@@ -4,7 +4,7 @@ Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wy
 
 **Pewność.** Znalezisko *pewne* (firm) jest strukturalnie jednoznaczne i domyślnie łamie build. Znalezisko *heurystyczne* może być fałszywym alarmem, więc tylko ostrzega. Flaga `--strict` liczy też heurystyki do kodu wyjścia.
 
-**Analiza danych.** Reguły śledzą dane użytkownika w obrębie jednej funkcji. Superglobal wprost w miejscu użycia daje wykrycie pewne. Zmienna zasilona superglobalem daje heurystykę. Rzutowanie na liczbę, `absint`, `intval`, `esc_sql`, `$wpdb->prepare`, `escapeshellarg` i `basename` zdejmują skażenie. Nieznane funkcje go nie przenoszą, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
+**Analiza danych.** Reguły śledzą dane użytkownika w obrębie jednej funkcji. Superglobal wprost w miejscu użycia daje wykrycie pewne. Zmienna zasilona superglobalem daje heurystykę. Inne źródła (obiekt żądania REST, atrybuty shortcode, `add_query_arg`) dają zawsze heurystykę o poziomie średnim. Rzutowanie na liczbę, `absint`, `intval`, `esc_sql`, `$wpdb->prepare`, `escapeshellarg` i `basename` zdejmują skażenie. Nieznane funkcje go nie przenoszą, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
 
 | Reguła | Poziom | Pewność | CWE | Podpowiedź naprawy |
 | --- | --- | --- | --- | --- |
@@ -16,6 +16,7 @@ Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wy
 | `wp.auth.unprotected_action` | wysoki | heurystyka | CWE-352, CWE-862 | nie |
 | `wp.option.no_sanitize_callback` | średni | pewna | CWE-20 | nie |
 | `wp.secret.hardcoded` | krytyczny, wysoki, średni | pewna lub heurystyka | CWE-798 | nie |
+| `wp.sqli.param_unprepared` (tryb `--extended`) | średni | heurystyka | CWE-89 | nie |
 
 ## wp.sqli.unprepared
 
@@ -31,7 +32,9 @@ $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}orders WHERE i
 
 ## wp.xss.echo_superglobal
 
-Dane użytkownika w `echo` albo `print` bez funkcji ucieczki. To heurystyka, bo skaner nie zna wszystkich własnych funkcji czyszczących projektu. Dla tej reguły skaner podaje gotową poprawkę, dobraną do miejsca w HTML. Opis w sekcji "Podpowiedzi napraw" w README.
+Dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` albo w wartości zwracanej przez shortcode bez funkcji ucieczki. Odpowiedzi `json_encode` w `die`, `wp_die` i `printf` pomijamy, bo to zwykle AJAX.
+
+Źródłem mogą być superglobale, `filter_input`, `add_query_arg` bez adresu i atrybuty shortcode. Atrybuty shortcode (`$atts`, klucze z `shortcode_atts` i `extract`) wpisuje autor wpisu, więc skutkiem jest zapisany XSS, a nie odbity. To heurystyka, bo skaner nie zna wszystkich własnych funkcji czyszczących projektu. Dla tej reguły skaner podaje gotową poprawkę, dobraną do miejsca w HTML. Opis w sekcji "Podpowiedzi napraw" w README.
 
 ```php
 // Podatne
@@ -94,9 +97,27 @@ register_rest_route( 'demo/v1', '/orders', array(
 ) );
 ```
 
+## wp.sqli.param_unprepared
+
+Reguła rozszerzona, włączana flagą `--extended`. Zgłasza parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących, więc nie wie, czy do parametru trafiają dane od użytkownika. Dlatego to zawsze heurystyka o poziomie średnim. Znaleziska, które pokrywa zwykła reguła `wp.sqli.unprepared`, są pomijane.
+
+```php
+// Podatne, jeśli funkcję wołają dane od użytkownika
+function demo_get_order( $id ) {
+	global $wpdb;
+	return $wpdb->get_row( "SELECT * FROM {$wpdb->prefix}orders WHERE id = " . $id );
+}
+
+// Poprawne
+function demo_get_order( $id ) {
+	global $wpdb;
+	return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}orders WHERE id = %d", $id ) );
+}
+```
+
 ## wp.auth.unprotected_action
 
-Uchwyt `admin_post_*` albo `wp_ajax_*`, który zmienia stan (zapis opcji, meta, bazy, usunięcie) bez weryfikacji nonce i bez kontroli uprawnień. Reguła pomija uchwyty, które wołają pomocnika o nazwie kontrolnej (zawierającej na przykład `nonce`, `verify`, `permission`, `capability`). To heurystyka.
+Uchwyt `admin_post_*` albo `wp_ajax_*`, który zmienia stan (zapis opcji, meta, bazy, usunięcie) bez weryfikacji nonce i bez kontroli uprawnień. Uchwyt może być funkcją, domknięciem albo metodą klasy z tego samego pliku (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ Klasa::class, 'm' ]`, `'Klasa::m'`). Brak uprawnień przy obecnym nonce ma poziom średni, bo atak wymaga zalogowanego konta. Brak nonce albo brak obu zabezpieczeń ma poziom wysoki. Reguła pomija uchwyty, które wołają pomocnika o nazwie kontrolnej (zawierającej na przykład `nonce`, `verify`, `permission`, `capability`). To heurystyka.
 
 ```php
 // Podatne
