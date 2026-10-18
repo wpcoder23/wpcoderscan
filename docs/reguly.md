@@ -1,0 +1,143 @@
+# Reguły WPCoderScan
+
+Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wygląda kod poprawny i jaką pewność ma wykrycie.
+
+**Pewność.** Znalezisko *pewne* (firm) jest strukturalnie jednoznaczne i domyślnie łamie build. Znalezisko *heurystyczne* może być fałszywym alarmem, więc tylko ostrzega. Flaga `--strict` liczy też heurystyki do kodu wyjścia.
+
+**Analiza danych.** Reguły śledzą dane użytkownika w obrębie jednej funkcji. Superglobal wprost w miejscu użycia daje wykrycie pewne. Zmienna zasilona superglobalem daje heurystykę. Rzutowanie na liczbę, `absint`, `intval`, `esc_sql`, `$wpdb->prepare`, `escapeshellarg` i `basename` zdejmują skażenie. Nieznane funkcje go nie przenoszą, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
+
+| Reguła | Poziom | Pewność | CWE | Podpowiedź naprawy |
+| --- | --- | --- | --- | --- |
+| `wp.sqli.unprepared` | krytyczny, wysoki | pewna lub heurystyka | CWE-89 | nie |
+| `wp.xss.echo_superglobal` | wysoki, średni | heurystyka | CWE-79 | tak |
+| `wp.unserialize.user_input` | wysoki | pewna | CWE-502 | tak |
+| `wp.rce.dynamic` | krytyczny, wysoki, średni | pewna lub heurystyka | CWE-94 | nie |
+| `wp.rest.no_permission_callback` | wysoki, średni | pewna lub heurystyka | CWE-862 | nie |
+| `wp.auth.unprotected_action` | wysoki | heurystyka | CWE-352, CWE-862 | nie |
+| `wp.option.no_sanitize_callback` | średni | pewna | CWE-20 | nie |
+| `wp.secret.hardcoded` | krytyczny, wysoki, średni | pewna lub heurystyka | CWE-798 | nie |
+
+## wp.sqli.unprepared
+
+Zapytanie `$wpdb` budowane z danych użytkownika bez `prepare`. Superglobal wprost w zapytaniu to wykrycie pewne i krytyczne. Zmienna zasilona superglobalem to heurystyka o wysokiej wadze. Zwykłe zmienne i nazwy tabel nie są zgłaszane.
+
+```php
+// Podatne
+$wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders WHERE id = " . $_GET['id'] );
+
+// Poprawne
+$wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}orders WHERE id = %d", $_GET['id'] ) );
+```
+
+## wp.xss.echo_superglobal
+
+Dane użytkownika w `echo` albo `print` bez funkcji ucieczki. To heurystyka, bo skaner nie zna wszystkich własnych funkcji czyszczących projektu. Dla tej reguły skaner podaje gotową poprawkę, dobraną do miejsca w HTML. Opis w sekcji "Podpowiedzi napraw" w README.
+
+```php
+// Podatne
+<h2>Wyniki dla: <?php echo $_GET['q']; ?></h2>
+<input value="<?php echo $_GET['q']; ?>">
+<a href="<?php echo $_GET['back']; ?>">Wróć</a>
+
+// Poprawne
+<h2>Wyniki dla: <?php echo esc_html( $_GET['q'] ); ?></h2>
+<input value="<?php echo esc_attr( $_GET['q'] ); ?>">
+<a href="<?php echo esc_url( $_GET['back'] ); ?>">Wróć</a>
+```
+
+## wp.unserialize.user_input
+
+`unserialize` albo `maybe_unserialize` na danych z superglobala. Pozwala wstrzyknąć obiekt PHP i uruchomić łańcuch gadżetów z innej wtyczki. Wywołanie, które ma drugi argument `array( 'allowed_classes' => false )`, nie jest zgłaszane. Skaner podpowiada tę poprawkę dla jednoargumentowego `unserialize`.
+
+```php
+// Podatne
+$settings = unserialize( $_POST['settings'] );
+
+// Poprawne
+$settings = json_decode( wp_unslash( $_POST['settings'] ), true );
+// albo, gdy musisz zostać przy serializacji
+$settings = unserialize( $_POST['settings'], array( 'allowed_classes' => false ) );
+```
+
+## wp.rce.dynamic
+
+Wykonanie kodu albo polecenia z danych użytkownika: `eval`, `include` i `require` ze ścieżką od użytkownika, backticki oraz rodzina `exec`, `system`, `shell_exec`, `passthru`. Dane z superglobala wprost są pewne i krytyczne. Przez zmienną to heurystyka. `eval` bez danych użytkownika to średnia heurystyka.
+
+```php
+// Podatne
+include $_GET['template'] . '.php';
+
+// Poprawne
+$allowed = array( 'list', 'single' );
+$name    = in_array( $_GET['template'], $allowed, true ) ? $_GET['template'] : 'list';
+include __DIR__ . '/templates/' . $name . '.php';
+```
+
+## wp.rest.no_permission_callback
+
+Trasa REST bez `permission_callback`. Brak tego argumentu to wykrycie pewne. `__return_true` na trasie zmieniającej dane to heurystyka. Trasy tylko do odczytu (`GET`, `READABLE`) z `__return_true` pomijamy, bo to częsty i zamierzony wzorzec.
+
+```php
+// Podatne
+register_rest_route( 'demo/v1', '/orders', array(
+	'methods'  => 'POST',
+	'callback' => 'demo_save_order',
+) );
+
+// Poprawne
+register_rest_route( 'demo/v1', '/orders', array(
+	'methods'             => 'POST',
+	'callback'            => 'demo_save_order',
+	'permission_callback' => function () {
+		return current_user_can( 'manage_options' );
+	},
+) );
+```
+
+## wp.auth.unprotected_action
+
+Uchwyt `admin_post_*` albo `wp_ajax_*`, który zmienia stan (zapis opcji, meta, bazy, usunięcie) bez weryfikacji nonce i bez kontroli uprawnień. Reguła pomija uchwyty, które wołają pomocnika o nazwie kontrolnej (zawierającej na przykład `nonce`, `verify`, `permission`, `capability`). To heurystyka.
+
+```php
+// Podatne
+add_action( 'wp_ajax_demo_delete', function () {
+	delete_option( 'demo_data' );
+	wp_send_json_success();
+} );
+
+// Poprawne
+add_action( 'wp_ajax_demo_delete', function () {
+	check_ajax_referer( 'demo_delete' );
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_send_json_error( null, 403 );
+	}
+	delete_option( 'demo_data' );
+	wp_send_json_success();
+} );
+```
+
+## wp.option.no_sanitize_callback
+
+`register_setting` bez `sanitize_callback`. Wartość opcji jest zapisywana bez walidacji.
+
+```php
+// Podatne
+register_setting( 'demo_group', 'demo_option' );
+
+// Poprawne
+register_setting( 'demo_group', 'demo_option', array( 'sanitize_callback' => 'sanitize_text_field' ) );
+```
+
+## wp.secret.hardcoded
+
+Zaszyte sekrety w kodzie. Klucze dostawców o znanym formacie (AWS, Stripe live, GitHub, Google, Slack, SendGrid, klucz prywatny z treścią) są wykryciem pewnym. Wykrycie po nazwie zmiennej (`password`, `secret`, `api_key` i podobne) jest heurystyką i wymaga wartości, która wygląda na sekret: co najmniej 12 znaków, litery i cyfry, bez spacji, nie adres URL, nie tekst zastępczy.
+
+```php
+// Podatne
+$api_key = 'wartość-prawdziwego-klucza';
+
+// Poprawne
+$api_key = defined( 'DEMO_API_KEY' ) ? DEMO_API_KEY : '';   // stała w wp-config.php poza repozytorium
+```
+
+Jeśli klucz trafił do repozytorium, uznaj go za ujawniony i unieważnij. Samo usunięcie z kodu nie wystarczy, bo klucz zostaje w historii.

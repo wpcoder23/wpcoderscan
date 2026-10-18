@@ -36,6 +36,8 @@ Wersja 0.1 pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w 
 - XSS: dane użytkownika w `echo` albo `print` bez `esc_*`, `wp_kses`, `sanitize_*` ani rzutowania (heurystyka).
 - Nonce i uprawnienia: uchwyty `admin_post_*` i `wp_ajax_*`, które zmieniają stan bez weryfikacji nonce albo bez `current_user_can` (heurystyka).
 
+Pełny opis każdej reguły z przykładami podatnego i poprawnego kodu jest w [docs/reguly.md](docs/reguly.md).
+
 Każde znalezisko dostaje poziom (krytyczny, wysoki, średni, niski), poziom pewności, miejsce w kodzie i wskazówkę naprawy. Wyniki mapujemy na OWASP ASVS i CWE.
 
 Skaner pomija katalogi `vendor`, `vendor-prefixed`, `node_modules`, `.git`, `dist` i `build`.
