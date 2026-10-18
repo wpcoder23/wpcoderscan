@@ -10,6 +10,10 @@ const restVulnerable = join(here, 'fixtures', 'vulnerable', 'rest.php');
 const restSafe = join(here, 'fixtures', 'safe', 'rest_safe.php');
 const rceVulnerable = join(here, 'fixtures', 'vulnerable', 'rce.php');
 const rceSafe = join(here, 'fixtures', 'safe', 'rce_safe.php');
+const unserVulnerable = join(here, 'fixtures', 'vulnerable', 'unserialize.php');
+const unserSafe = join(here, 'fixtures', 'safe', 'unserialize_safe.php');
+const regSettingVulnerable = join(here, 'fixtures', 'vulnerable', 'register_setting.php');
+const regSettingSafe = join(here, 'fixtures', 'safe', 'register_setting_safe.php');
 
 describe('reguła SQL injection', () => {
   it('wykrywa niezabezpieczone zapytania $wpdb', async () => {
@@ -63,6 +67,40 @@ describe('reguła RCE i wykonanie poleceń', () => {
     const r = await scan(rceSafe, {});
     const rce = r.findings.filter((f) => f.ruleId === 'wp.rce.dynamic');
     expect(rce).toHaveLength(0);
+    expect(r.errors).toHaveLength(0);
+  });
+});
+
+describe('reguła unserialize', () => {
+  it('wykrywa unserialize na superglobalach', async () => {
+    const r = await scan(unserVulnerable, {});
+    const u = r.findings.filter((f) => f.ruleId === 'wp.unserialize.user_input');
+    expect(u).toHaveLength(3);
+    expect(u.every((f) => f.severity === 'high' && f.confidence === 'firm')).toBe(true);
+    expect(r.errors).toHaveLength(0);
+  });
+
+  it('nie zgłasza deserializacji danych z bazy ani json_decode', async () => {
+    const r = await scan(unserSafe, {});
+    const u = r.findings.filter((f) => f.ruleId === 'wp.unserialize.user_input');
+    expect(u).toHaveLength(0);
+    expect(r.errors).toHaveLength(0);
+  });
+});
+
+describe('reguła register_setting', () => {
+  it('wykrywa brak sanitize_callback', async () => {
+    const r = await scan(regSettingVulnerable, {});
+    const s = r.findings.filter((f) => f.ruleId === 'wp.option.no_sanitize_callback');
+    expect(s).toHaveLength(2);
+    expect(s.every((f) => f.severity === 'medium' && f.confidence === 'firm')).toBe(true);
+    expect(r.errors).toHaveLength(0);
+  });
+
+  it('nie zgłasza opcji z sanitize_callback ani starej sygnatury', async () => {
+    const r = await scan(regSettingSafe, {});
+    const s = r.findings.filter((f) => f.ruleId === 'wp.option.no_sanitize_callback');
+    expect(s).toHaveLength(0);
     expect(r.errors).toHaveLength(0);
   });
 });
