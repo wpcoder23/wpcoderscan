@@ -2,7 +2,7 @@
 
 Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję. Narzędzie dla deweloperów, vendorów i agencji, na czasy kodu generowanego przez AI.
 
-Status: wczesny etap (v0.3.0). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
+Status: wczesny etap (v0.3.1). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
@@ -37,12 +37,14 @@ Za dane od użytkownika skaner uznaje:
 
 Elementy tablicy są śledzone po literalnym kluczu, więc `$a['x']` z `$_GET` nie skazi `$a['y']`.
 
+Zmienna sprawdzona przed użyciem przestaje być skażona. Skaner uznaje za sprawdzenie `in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, `is_numeric`, zakotwiczone wyrażenie regularne i porównanie z literałem. Działa to w ciele `if`, w gałęzi `else` po negacji oraz po wczesnym wyjściu (`return`, `die`, `wp_die`). Skaner nie ocenia, czy lista dozwolonych wartości jest poprawna.
+
 - SQL injection: zapytania `$wpdb` budowane bez `prepare` z danych użytkownika. Superglobal wprost w zapytaniu jest pewny, zmienna zasilona superglobalem to heurystyka.
 - REST: trasa bez `permission_callback` (pewne). `__return_true` na trasie zmieniającej dane (heurystyka). Trasy tylko do odczytu pomijamy.
 - RCE: `eval`, `include` i `require` ze ścieżką od użytkownika, backticki, rodzina `exec` i `shell_exec`. Dane z superglobala wprost są pewne, przez zmienną to heurystyka.
 - Deserializacja: `unserialize` i `maybe_unserialize` na superglobalu (pewne).
 - Opcje: `register_setting` bez `sanitize_callback` (pewne).
-- Sekrety: klucze dostawców (AWS, Stripe, GitHub, Google, Slack, SendGrid, klucz prywatny z treścią) jako pewne. Wykrycie po nazwie zmiennej jako heurystyka.
+- Sekrety: klucze dostawców (AWS, Stripe, GitHub, Slack, SendGrid, klucz prywatny z treścią) jako pewne. Klucz API Google i wykrycie po nazwie zmiennej jako heurystyka, bo klucze do map bywają publiczne z założenia.
 - XSS: dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` oraz w wartości zwracanej przez shortcode, bez `esc_*`, `wp_kses`, `sanitize_*` ani rzutowania (heurystyka).
 - Nonce i uprawnienia: uchwyty `admin_post_*` i `wp_ajax_*`, które zmieniają stan bez weryfikacji nonce albo bez `current_user_can` (heurystyka). Uchwytem może być funkcja, domknięcie albo metoda klasy z tego samego pliku. Brak uprawnień przy obecnym nonce to poziom średni, a brak obu zabezpieczeń to wysoki.
 
@@ -102,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.3.0
+      - uses: wpcoder23/wpcoderscan@v0.3.1
         with:
           path: .
           fail-on: high

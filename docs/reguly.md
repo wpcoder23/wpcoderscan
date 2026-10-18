@@ -4,7 +4,7 @@ Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wy
 
 **Pewność.** Znalezisko *pewne* (firm) jest strukturalnie jednoznaczne i domyślnie łamie build. Znalezisko *heurystyczne* może być fałszywym alarmem, więc tylko ostrzega. Flaga `--strict` liczy też heurystyki do kodu wyjścia.
 
-**Analiza danych.** Reguły śledzą dane użytkownika w obrębie jednej funkcji. Superglobal wprost w miejscu użycia daje wykrycie pewne. Zmienna zasilona superglobalem daje heurystykę. Inne źródła (obiekt żądania REST, atrybuty shortcode, `add_query_arg`) dają zawsze heurystykę o poziomie średnim. Rzutowanie na liczbę, `absint`, `intval`, `esc_sql`, `$wpdb->prepare`, `escapeshellarg` i `basename` zdejmują skażenie. Nieznane funkcje go nie przenoszą, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
+**Analiza danych.** Reguły śledzą dane użytkownika w obrębie jednej funkcji. Superglobal wprost w miejscu użycia daje wykrycie pewne. Zmienna zasilona superglobalem daje heurystykę. Inne źródła (obiekt żądania REST, atrybuty shortcode, `add_query_arg`) dają zawsze heurystykę o poziomie średnim. Rzutowanie na liczbę, `absint`, `intval`, `esc_sql`, `$wpdb->prepare`, `escapeshellarg` i `basename` zdejmują skażenie. Zmienna sprawdzona przed użyciem listą dozwolonych wartości (`in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, zakotwiczony regex, porównanie z literałem) przestaje być skażona. Nieznane funkcje go nie przenoszą, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
 
 | Reguła | Poziom | Pewność | CWE | Podpowiedź naprawy |
 | --- | --- | --- | --- | --- |
@@ -50,7 +50,7 @@ Dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` albo w wartości 
 
 ## wp.unserialize.user_input
 
-`unserialize` albo `maybe_unserialize` na danych z superglobala. Pozwala wstrzyknąć obiekt PHP i uruchomić łańcuch gadżetów z innej wtyczki. Wywołanie, które ma drugi argument `array( 'allowed_classes' => false )`, nie jest zgłaszane. Skaner podpowiada tę poprawkę dla jednoargumentowego `unserialize`.
+`unserialize` albo `maybe_unserialize` na danych z superglobala. Pozwala wstrzyknąć obiekt PHP i uruchomić łańcuch gadżetów z innej wtyczki. Wywołanie, które ma drugi argument `array( 'allowed_classes' => false )`, nie jest zgłaszane. Lista klas zamiast `false` obniża zgłoszenie do średniej heurystyki, bo ryzyko zostaje, jeśli któraś z klas ma metody magiczne. Skaner podpowiada tę poprawkę dla jednoargumentowego `unserialize`.
 
 ```php
 // Podatne
@@ -151,7 +151,7 @@ register_setting( 'demo_group', 'demo_option', array( 'sanitize_callback' => 'sa
 
 ## wp.secret.hardcoded
 
-Zaszyte sekrety w kodzie. Klucze dostawców o znanym formacie (AWS, Stripe live, GitHub, Google, Slack, SendGrid, klucz prywatny z treścią) są wykryciem pewnym. Wykrycie po nazwie zmiennej (`password`, `secret`, `api_key` i podobne) jest heurystyką i wymaga wartości, która wygląda na sekret: co najmniej 12 znaków, litery i cyfry, bez spacji, nie adres URL, nie tekst zastępczy.
+Zaszyte sekrety w kodzie. Klucze dostawców o znanym formacie (AWS, Stripe live, GitHub, Slack, SendGrid, klucz prywatny z treścią) są wykryciem pewnym. Klucz API Google to heurystyka o wysokim poziomie, bo klucze do map w przeglądarce bywają publiczne z założenia, a ten sam format mają klucze płatnych API. Wykrycie po nazwie zmiennej (`password`, `secret`, `api_key` i podobne) jest heurystyką i wymaga wartości, która wygląda na sekret: co najmniej 12 znaków, litery i cyfry, bez spacji, nie adres URL, nie tekst zastępczy.
 
 ```php
 // Podatne

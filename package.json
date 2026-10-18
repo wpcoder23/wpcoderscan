@@ -1,6 +1,6 @@
 {
   "name": "wpcoderscan",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "WPCoderScan - skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję.",
   "type": "module",
   "license": "Apache-2.0",

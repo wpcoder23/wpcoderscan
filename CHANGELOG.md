@@ -1,5 +1,15 @@
 # Historia zmian
 
+## 0.3.1
+
+Mniej fałszywych alarmów.
+
+- Zmienna sprawdzona przed użyciem listą dozwolonych wartości nie jest już skażona. Dotyczy `in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, `is_numeric`, zakotwiczonego wyrażenia regularnego i porównania z literałem. Działa w ciele `if`, w `else` po negacji i po wczesnym wyjściu.
+- Klucz API Google jest heurystyką, nie wykryciem pewnym. Nie łamie już build, bo klucze do map bywają publiczne z założenia.
+- `unserialize` z listą klas w `allowed_classes` to średnia heurystyka zamiast wykrycia pewnego.
+- CI sprawdza CLI na podatnych i bezpiecznych próbkach, także z flagą `--extended`.
+- Pomiar: na 200 najpopularniejszych wtyczkach z wordpress.org (49 tys. plików PHP) nie zostało żadne wykrycie pewne poza `register_setting`. Recall na zbiorze CVE bez zmian.
+
 ## 0.3.0
 
 Więcej źródeł danych i lepsze wykrywanie na historycznych podatnościach.
