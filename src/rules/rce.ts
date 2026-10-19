@@ -1,12 +1,15 @@
 // Reguła: zdalne wykonanie kodu i niebezpieczne wykonanie poleceń.
 // Wykrywa eval z danych dynamicznych, include/require ze ścieżką z danych
-// użytkownika, rodzinę system/exec/shell_exec oraz polecenia w backtickach.
+// użytkownika, funkcje ładujące szablon po nazwie (get_template_part, load_template),
+// rodzinę system/exec/shell_exec oraz polecenia w backtickach.
 // Dane śledzimy lekką analizą skażenia (taint.ts). Superglobal wprost to
 // wykrycie pewne. Zmienna zasilona danymi z superglobala to heurystyka.
 // Zwykłe dynamiczne include ze ścieżką złożoną ze stałych i zmiennych
 // wtyczki nie jest zgłaszane, bo tak działa większość szablonów w WordPressie.
 import { walk } from '../parser';
-import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
+import { asNode, calledName, callArgs, nodeStart, offsetName, type AnyNode } from './ast-utils';
+import { isLocalCall, linkCallers } from './callers';
+import { findShortcodeHandlers } from './shortcodes';
 import { CODE_SPEC, EXEC_SPEC, INCLUDE_SPEC, originText, TaintAnalyzer, viaText, type TaintHit } from './taint';
 import type { Confidence, Finding, FileContext, PhpNode, Rule, Severity } from './types';
 
@@ -21,6 +24,44 @@ const SHELL_SINKS = new Set([
   'pcntl_exec',
 ]);
 
+// Nazwy ładujące szablon po nazwie. Porównujemy bez podkreśleń i wielkości liter, żeby objąć
+// get_template_part, getTemplatePart i własne przedrostki (lae_get_template_part).
+const TEMPLATE_LOADER =
+  /(?:gettemplate(?:part|file|html)?|loadtemplate(?:part|file)?|locatetemplate|rendertemplate(?:part)?|includetemplate)$/;
+
+// Funkcje rdzenia WordPressa i WooCommerce. Dane wprost z superglobala to przy nich wykrycie pewne.
+// Własne funkcje o podobnej nazwie mogą walidować nazwę, więc dają tylko heurystykę.
+const CORE_LOADERS = new Set([
+  'get_template_part',
+  'locate_template',
+  'load_template',
+  'wc_get_template',
+  'wc_get_template_part',
+  'wc_get_template_html',
+]);
+
+interface TemplateLoader {
+  label: string;
+  core: boolean;
+  argCount: number; // ile pierwszych argumentów składa nazwę szablonu
+}
+
+// Funkcja albo metoda (na dowolnym obiekcie) ładująca szablon po nazwie.
+function templateLoader(n: AnyNode): TemplateLoader | undefined {
+  if (n.kind !== 'call') return undefined;
+  const fn = calledName(n);
+  let label = fn;
+  if (!label) {
+    const what = asNode(n.what);
+    if (!what || (what.kind !== 'propertylookup' && what.kind !== 'staticlookup')) return undefined;
+    label = offsetName(what.offset);
+  }
+  if (!label) return undefined;
+  const flat = label.replace(/_/g, '').toLowerCase();
+  if (!TEMPLATE_LOADER.test(flat)) return undefined;
+  return { label, core: !!fn && CORE_LOADERS.has(fn), argCount: flat.endsWith('templatepart') ? 2 : 1 };
+}
+
 export const rceRule: Rule = {
   id: 'wp.rce.dynamic',
   titleKey: 'rule.wp.rce.dynamic.title',
@@ -33,6 +74,11 @@ export const rceRule: Rule = {
     const evalTaint = new TaintAnalyzer(ctx.ast, CODE_SPEC);
     const includeTaint = new TaintAnalyzer(ctx.ast, INCLUDE_SPEC);
     const execTaint = new TaintAnalyzer(ctx.ast, EXEC_SPEC);
+    // Atrybuty shortcode pochodzą od autora wpisu, więc są danymi użytkownika.
+    for (const h of findShortcodeHandlers(ctx.ast, ctx.code)) {
+      for (const analyzer of [evalTaint, includeTaint, execTaint]) analyzer.seed(h.scope, h.param, 'shortcode');
+    }
+    for (const analyzer of [evalTaint, includeTaint, execTaint]) linkCallers(analyzer, ctx.ast, ctx.code);
 
     const push = (
       node: AnyNode,
@@ -74,12 +120,14 @@ export const rceRule: Rule = {
       return null;
     };
 
-    const analyzeArgs = (analyzer: TaintAnalyzer, n: AnyNode, stack: PhpNode[]): TaintHit => {
+    // skipArrays: literał tablicy w wywołaniu ładującym szablon to dane dla szablonu, nie jego nazwa.
+    const analyzeArgs = (analyzer: TaintAnalyzer, n: AnyNode, stack: PhpNode[], limit = Infinity, skipArrays = false): TaintHit => {
       let direct = false;
       let viaVar = false;
       let via: string | undefined;
       let source: TaintHit['source'];
-      for (const a of callArgs(n)) {
+      for (const a of callArgs(n).slice(0, limit)) {
+        if (skipArrays && asNode(a)?.kind === 'array') continue;
         const h = analyzer.analyze(a, stack, n);
         direct = direct || h.direct;
         viaVar = viaVar || h.viaVar;
@@ -125,6 +173,23 @@ export const rceRule: Rule = {
           ['CWE-98'],
           ['12.3.1'],
           ctx.t('rce.include.fix'),
+        );
+        return;
+      }
+
+      // Funkcje ładujące szablon po nazwie. Wywołania funkcji z tego pliku obsługuje śledzenie wywołań.
+      const loader = templateLoader(n);
+      if (loader && !isLocalCall(ctx.ast, n)) {
+        const g = grade(analyzeArgs(includeTaint, n, stack, loader.argCount, true), 'critical');
+        if (!g) return;
+        push(
+          n,
+          loader.core ? g.sev : 'high',
+          loader.core ? g.conf : 'heuristic',
+          ctx.t('rce.template.message', { name: loader.label, from: g.from }),
+          ['CWE-98'],
+          ['12.3.1'],
+          ctx.t('rce.template.fix'),
         );
         return;
       }

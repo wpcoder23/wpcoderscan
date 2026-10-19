@@ -4,9 +4,10 @@
 // przypisano takie dane. Kolejność przypisań liczy się wg pozycji w kodzie,
 // więc `$id = absint( $id )` zdejmuje skażenie. Funkcje nieznane nie przenoszą
 // skażenia. To celowo ostrożne podejście: wolimy przeoczyć niż zalać
-// użytkownika fałszywymi alarmami. Analizę między funkcjami zostawiamy na Pro.
+// użytkownika fałszywymi alarmami. Przepływ przez wywołania funkcji z tego
+// samego pliku dokłada callers.ts, przez zasianie parametrów (seed).
 import { asNode, baseVariable, calledName, offsetName, SUPERGLOBALS, type AnyNode } from './ast-utils';
-import { guardedNames } from './guards';
+import { confirmedBy, confirmedByNegation, elementPath, guardedNames } from './guards';
 import type { Translate } from '../i18n';
 import type { PhpNode } from './types';
 
@@ -15,16 +16,24 @@ export interface TaintHit {
   viaVar: boolean; // zmienna skażona wcześniejszym przypisaniem albo parametr żądania REST
   via?: string; // nazwa pierwszej skażonej zmiennej
   source?: TaintSource; // pochodzenie, gdy nie jest to zwykły superglobal
+  // Całe skażenie przeszło przez funkcję ucieczki cudzysłowów (esc_sql, addslashes). Chroni ona wartość
+  // ujętą w cudzysłowy zapytania, więc takie trafienie uznajemy za czyste, dopóki nie trafi poza cudzysłów.
+  escaped?: boolean;
+  // Wartość po ucieczce cudzysłowów stoi w zapytaniu poza cudzysłowem (liczba, kolumna, ORDER BY).
+  unquoted?: boolean;
 }
 
 // request: obiekt żądania REST. url: add_query_arg bez adresu, czyli bieżący adres strony.
 // param: parametr funkcji (tylko w trybie rozszerzonym).
 // shortcode: atrybuty shortcode, które autor wpisu (Contributor) wpisuje bez filtrowania.
-export type TaintSource = 'request' | 'url' | 'param' | 'shortcode';
+// caller: parametr funkcji, któremu wywołanie z tego samego pliku przekazuje dane użytkownika.
+export type TaintSource = 'request' | 'url' | 'param' | 'shortcode' | 'caller';
 
 // Czy zmienna jest skażona i skąd. Żądanie REST daje tylko heurystykę, bo trasa
 // może walidować argumenty przez args (type, sanitize_callback), czego nie widzimy.
-type Origin = 'none' | 'superglobal' | TaintSource;
+type Origin = 'none' | 'superglobal' | TaintSource | EscapedOrigin;
+// Zmienna, która przechowuje dane po ucieczce cudzysłowów. Znacznik ~ odróżnia je od zwykłego skażenia.
+type EscapedOrigin = `${'superglobal' | TaintSource}~`;
 
 interface Env {
   origin(name: string): Origin;
@@ -38,6 +47,9 @@ export interface TaintSpec {
   clean: ReadonlySet<string>;
   // Metody obiektu $wpdb zwracające bezpieczną wartość (prepare).
   methodClean?: ReadonlySet<string>;
+  // Funkcje ucieczki cudzysłowów (esc_sql, addslashes). Chronią wartość wstawioną w cudzysłowy zapytania,
+  // ale nie liczbę, nazwę kolumny ani kierunek sortowania wklejone bez cudzysłowu.
+  escapers?: ReadonlySet<string>;
   // add_query_arg i remove_query_arg bez adresu zwracają bieżący adres strony,
   // który kontroluje atakujący. Dla XSS to źródło danych.
   queryArgSource?: boolean;
@@ -114,7 +126,7 @@ const PASSTHROUGH = new Set([
   // Czyszczenie pod XSS nie chroni przed SQL, ścieżką ani poleceniem. Dla
   // tamtych ujść te funkcje przenoszą skażenie. Dla XSS są w zbiorze clean,
   // który sprawdzamy wcześniej.
-  'sanitize_text_field', 'sanitize_textarea_field', 'sanitize_email', 'sanitize_user',
+  'sanitize_text_field', 'sanitize_textarea_field', 'sanitize_email', 'sanitize_user', 'wc_clean',
   'esc_html', 'esc_attr', 'esc_url', 'esc_url_raw', 'esc_js', 'esc_textarea',
   'wp_kses', 'wp_kses_post', 'wp_kses_data', 'htmlspecialchars', 'htmlentities',
   'wp_json_encode', 'addslashes',
@@ -132,9 +144,13 @@ const COMMON_CLEAN = [
 
 const SQL_CLEAN = [
   ...COMMON_CLEAN,
-  'esc_sql', 'mysqli_real_escape_string', 'addslashes', 'sanitize_key', 'sanitize_title',
-  'sanitize_title_with_dashes', 'wp_parse_id_list', 'sanitize_sql_orderby',
+  'sanitize_key', 'sanitize_title', 'sanitize_title_with_dashes', 'wp_parse_id_list', 'sanitize_sql_orderby',
 ];
+
+const SQL_ESCAPERS = ['esc_sql', 'mysqli_real_escape_string', 'mysqli_escape_string', 'addslashes'];
+
+// Metody $wpdb ucinające cudzysłowy, odpowiedniki esc_sql.
+const WPDB_ESCAPE_METHODS = new Set(['_escape', '_real_escape', 'escape']);
 
 const INCLUDE_CLEAN = [
   ...COMMON_CLEAN,
@@ -148,7 +164,7 @@ const XSS_CLEAN = [
   'esc_html', 'esc_attr', 'esc_url', 'esc_url_raw', 'esc_js', 'esc_textarea',
   'esc_html__', 'esc_html_e', 'esc_html_x', 'esc_attr__', 'esc_attr_e', 'esc_attr_x',
   'wp_kses', 'wp_kses_post', 'wp_kses_data',
-  'sanitize_text_field', 'sanitize_textarea_field', 'sanitize_email', 'sanitize_key',
+  'sanitize_text_field', 'sanitize_textarea_field', 'sanitize_email', 'sanitize_key', 'wc_clean',
   'sanitize_title', 'sanitize_user', 'sanitize_file_name', 'sanitize_html_class',
   'wp_json_encode', 'htmlspecialchars', 'htmlentities',
 ];
@@ -158,7 +174,8 @@ export const CODE_SPEC: TaintSpec = { clean: new Set(COMMON_CLEAN) };
 
 export const SQL_SPEC: TaintSpec = {
   clean: new Set(SQL_CLEAN),
-  methodClean: new Set(['prepare', '_escape', '_real_escape', 'escape']),
+  methodClean: new Set(['prepare']),
+  escapers: new Set(SQL_ESCAPERS),
 };
 // Tryb rozszerzony: jak SQL_SPEC, ale parametry funkcji też są źródłem.
 export const SQL_PARAM_SPEC: TaintSpec = { ...SQL_SPEC, paramSource: true };
@@ -166,16 +183,62 @@ export const INCLUDE_SPEC: TaintSpec = { clean: new Set(INCLUDE_CLEAN) };
 export const EXEC_SPEC: TaintSpec = { clean: new Set(EXEC_CLEAN) };
 export const XSS_SPEC: TaintSpec = { clean: new Set(XSS_CLEAN), queryArgSource: true };
 
+// Jak groźne jest skażenie: 0 po ucieczce cudzysłowów (bezpieczne w cudzysłowie), 1 po ucieczce poza
+// cudzysłowem, 2 zwykłe. Przy łączeniu wygrywa groźniejsze, bo jeden niezabezpieczony składnik wystarcza.
+function danger(h: TaintHit): number {
+  return h.escaped ? 0 : h.unquoted ? 1 : 2;
+}
+
 function merge(a: TaintHit, b: TaintHit): TaintHit {
   if (!a.direct && !a.viaVar) return b;
   if (!b.direct && !b.viaVar) return a;
+  const da = danger(a);
+  const db = danger(b);
+  if (da !== db) return da > db ? a : b;
   const first = a.direct ? a : b.direct ? b : a;
   return {
     direct: a.direct || b.direct,
     viaVar: a.viaVar || b.viaVar,
     via: a.via ?? b.via,
     source: first.source,
+    ...(a.escaped ? { escaped: true } : {}),
+    ...(a.unquoted ? { unquoted: true } : {}),
   };
+}
+
+// Skażenie, które przeszło przez funkcję ucieczki cudzysłowów.
+function escapedHit(inner: TaintHit): TaintHit {
+  return inner.direct || inner.viaVar ? { ...inner, escaped: true } : NONE;
+}
+
+// Czy tekst zapytania kończy się w środku literału tekstowego. Backtick oznacza identyfikator, który esc_sql
+// nie chroni, więc w nim wartość uznajemy za niezabezpieczoną.
+function insideQuotes(sql: string): boolean {
+  let single = 0;
+  let double = 0;
+  let tick = 0;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === '\\') i++;
+    else if (c === "'") single++;
+    else if (c === '"') double++;
+    else if (c === '`') tick++;
+  }
+  return tick % 2 === 0 && (single % 2 === 1 || double % 2 === 1);
+}
+
+// Składniki sklejanego tekstu po kolei: operandy łańcucha kropek i części napisu w cudzysłowie.
+function chainParts(node: unknown, out: AnyNode[]): void {
+  const n = asNode(node);
+  if (!n) return;
+  if (n.kind === 'bin' && n.type === '.') {
+    chainParts(n.left, out);
+    chainParts(n.right, out);
+  } else if (n.kind === 'encapsed' && (n.type === 'string' || n.type === 'heredoc') && Array.isArray(n.value)) {
+    for (const part of n.value as unknown[]) chainParts(asNode(part)?.expression, out);
+  } else {
+    out.push(n);
+  }
 }
 
 function literalString(v: unknown): string | undefined {
@@ -210,7 +273,15 @@ function queryArgWithoutUrl(name: string, args: unknown[]): boolean {
 
 function fromOrigin(name: string, origin: Origin): TaintHit {
   if (origin === 'none') return NONE;
-  return { direct: false, viaVar: true, via: name, source: origin === 'superglobal' ? undefined : origin };
+  const escaped = origin.endsWith('~');
+  const base = (escaped ? origin.slice(0, -1) : origin) as 'superglobal' | TaintSource;
+  return {
+    direct: false,
+    viaVar: true,
+    via: name,
+    source: base === 'superglobal' ? undefined : base,
+    ...(escaped ? { escaped } : {}),
+  };
 }
 
 // Klucz tablicy będący literałem tekstowym albo liczbowym.
@@ -259,8 +330,13 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
           if (known !== undefined) return fromOrigin(base.name as string, known);
           return evalTaint(base, spec, env);
         }
-        // $tablica['a']['b']: precyzja na pierwszym poziomie, dalsze klucze dziedziczą.
-        if (inner && inner.kind === 'offsetlookup') return evalTaint(inner, spec, env);
+        // $tablica['a']['b']: sprawdzony cały element jest czysty, a poza tym precyzja jest na pierwszym
+        // poziomie i dalsze klucze dziedziczą.
+        if (inner && inner.kind === 'offsetlookup') {
+          const el = elementPath(n);
+          if (el && env.originKey(el.base, el.path) === 'none') return NONE;
+          return evalTaint(inner, spec, env);
+        }
         return evalTaint(base, spec, env);
       }
       return evalTaint(n.what, spec, env);
@@ -274,19 +350,26 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
     case 'assign':
       return evalTaint(n.right, spec, env);
     case 'bin':
-      return n.type === '.' || n.type === '??'
-        ? merge(evalTaint(n.left, spec, env), evalTaint(n.right, spec, env))
-        : NONE;
-    case 'retif':
+      if (n.type === '.') return evalChain(n, spec, env);
+      return n.type === '??' ? merge(evalTaint(n.left, spec, env), evalTaint(n.right, spec, env)) : NONE;
+    case 'encapsed':
+      if (n.type === 'string' || n.type === 'heredoc') return evalChain(n, spec, env);
+      return evalTaint(n.value, spec, env);
+    case 'retif': {
+      // W gałęziach warunku działa to, co sam warunek potwierdza: is_numeric( $v ) ? $v : 0.
+      const yes = n.trueExpr ? confirmedBy(n.test) : undefined;
+      const no = confirmedByNegation(n.test);
       return merge(
-        evalTaint(n.trueExpr ?? n.test, spec, env),
-        evalTaint(n.falseExpr, spec, env),
+        evalTaint(n.trueExpr ?? n.test, spec, yes ? withGuard(env, yes) : env),
+        evalTaint(n.falseExpr, spec, withGuard(env, no)),
       );
+    }
     case 'call': {
       const name = calledName(n);
       if (name) {
         if (spec.clean.has(name)) return NONE;
         const args = Array.isArray(n.arguments) ? (n.arguments as unknown[]) : [];
+        if (spec.escapers?.has(name)) return escapedHit(evalTaint(args[0], spec, env));
         if (isRawInputCall(name, args)) return { direct: true, viaVar: false };
         if (spec.queryArgSource && queryArgWithoutUrl(name, args)) {
           const inner = evalTaint(args, spec, env);
@@ -294,6 +377,12 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
         }
         if (name === 'array_map') {
           const fn = literalString(args[0]);
+          if (fn !== undefined && spec.clean.has(fn.toLowerCase())) return NONE;
+          if (fn !== undefined && spec.escapers?.has(fn.toLowerCase())) return escapedHit(evalTaint(args[1], spec, env));
+        }
+        // array_filter( $lista, 'is_numeric' ) zostawia tylko wartości liczbowe.
+        if (name === 'array_filter') {
+          const fn = literalString(args[1]);
           if (fn !== undefined && spec.clean.has(fn.toLowerCase())) return NONE;
         }
         return PASSTHROUGH.has(name) ? evalTaint(args, spec, env) : NONE;
@@ -306,7 +395,13 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
         if (base && base.kind === 'variable' && typeof base.name === 'string' && method && REST_GETTERS.has(method)) {
           if (env.isRequestVar(base.name)) return requestHit(base.name);
         }
+        if (base && base.kind === 'variable' && base.name === 'wpdb' && method && spec.escapers && WPDB_ESCAPE_METHODS.has(method)) {
+          return escapedHit(evalTaint((Array.isArray(n.arguments) ? (n.arguments as unknown[]) : [])[0], spec, env));
+        }
         if (base && base.kind === 'variable' && base.name === 'wpdb' && method && spec.methodClean?.has(method)) {
+          // prepare chroni wartości podane jako kolejne argumenty. Tekst zapytania sklejony z danych
+          // (ORDER BY $kolumna, nazwa tabeli, fragment WHERE) zostaje po stronie wywołującego.
+          if (method === 'prepare') return evalTaint((Array.isArray(n.arguments) ? (n.arguments as unknown[]) : [])[0], spec, env);
           return NONE;
         }
       }
@@ -324,6 +419,33 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
   }
 }
 
+// Tekst sklejany z literałów i wyrażeń. Wartość po ucieczce cudzysłowów jest bezpieczna tylko w cudzysłowie,
+// więc dla każdego składnika sprawdzamy, czy literały przed nim zostawiają otwarty cudzysłów. Gdy przed
+// składnikiem nie ma żadnego literału, nie znamy kontekstu i zostawiamy wartość jako ochronioną, żeby
+// ocenił ją tekst wokół całego wyrażenia. Rozstrzygnięta wartość w cudzysłowie jest czysta (NONE), więc
+// zagnieżdżony łańcuch w nawiasie albo gałęzi warunku nie jest oceniany drugi raz.
+function evalChain(node: AnyNode, spec: TaintSpec, env: Env): TaintHit {
+  const parts: AnyNode[] = [];
+  chainParts(node, parts);
+  let acc = NONE;
+  let text = '';
+  for (const part of parts) {
+    const lit = literalString(part);
+    if (lit !== undefined) {
+      text += lit;
+      continue;
+    }
+    let hit = evalTaint(part, spec, env);
+    if (hit.escaped && text !== '') {
+      hit = insideQuotes(text)
+        ? NONE
+        : { direct: hit.direct, viaVar: hit.viaVar, via: hit.via, source: hit.source, unquoted: true };
+    }
+    acc = merge(acc, hit);
+  }
+  return acc;
+}
+
 // Zdarzenie zmieniające stan skażenia zmiennej.
 interface TaintEvent {
   off: number; // pozycja końca przypisania, żeby prawa strona widziała stan sprzed
@@ -339,7 +461,7 @@ function withGuard(env: Env, guarded: ReadonlySet<string> | undefined): Env {
   if (!guarded || guarded.size === 0) return env;
   return {
     origin: (name) => (guarded.has(name) ? 'none' : env.origin(name)),
-    originKey: (name, key) => (guarded.has(name) ? 'none' : env.originKey(name, key)),
+    originKey: (name, key) => (guarded.has(name) || guarded.has(keyName(name, key)) ? 'none' : env.originKey(name, key)),
     isRequestVar: (name) => !guarded.has(name) && env.isRequestVar(name),
   };
 }
@@ -465,8 +587,14 @@ const SCALAR_TYPES = new Set(['int', 'integer', 'float', 'double', 'bool', 'bool
 // Parametry o takich nazwach to zwykle nazwa tabeli albo gotowe zapytanie przekazane dalej.
 const BENIGN_PARAM = /^(?:table|table_name|tablename|tbl|prefix|query|sql|sql_query|mysql_query|request)$/i;
 
-export function untypedParams(scope: AnyNode): string[] {
-  const out: string[] = [];
+export interface ParamInfo {
+  name: string; // bez dolara
+  scalar: boolean; // typ liczbowy albo logiczny, więc nie niesie tekstu
+}
+
+// Parametry funkcji w kolejności deklaracji.
+export function paramInfos(scope: AnyNode): ParamInfo[] {
+  const out: ParamInfo[] = [];
   const params = Array.isArray(scope.arguments) ? (scope.arguments as unknown[]) : [];
   for (const p of params) {
     const param = asNode(p);
@@ -475,13 +603,19 @@ export function untypedParams(scope: AnyNode): string[] {
     if (!name) continue;
     const type = asNode(param?.type);
     const typeName = typeof type?.name === 'string' ? type.name.toLowerCase() : '';
-    if (SCALAR_TYPES.has(typeName) || BENIGN_PARAM.test(name)) continue;
-    out.push(name);
+    out.push({ name, scalar: SCALAR_TYPES.has(typeName) });
   }
   return out;
 }
 
-type Seeds = Array<{ name: string; source: TaintSource }>;
+export function untypedParams(scope: AnyNode): string[] {
+  return paramInfos(scope)
+    .filter((p) => !p.scalar && !BENIGN_PARAM.test(p.name))
+    .map((p) => p.name);
+}
+
+// cleanKeys: elementy parametru znane jako czyste już w wywołaniu (na przykład klucz z literału).
+type Seeds = Array<{ name: string; source: TaintSource; cleanKeys?: string[] }>;
 
 function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped {
   const events: TaintEvent[] = [];
@@ -501,6 +635,11 @@ function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped 
   for (const seed of seeds) {
     current.set(seed.name, seed.source);
     history.set(seed.name, [{ off: -1, origin: seed.source, reset: true }]);
+    for (const key of seed.cleanKeys ?? []) {
+      const name = keyName(seed.name, key);
+      currentKeys.set(name, 'none');
+      history.set(name, [{ off: -1, origin: 'none', reset: false }]);
+    }
   }
   const env: Env = {
     origin: (name) => current.get(name) ?? 'none',
@@ -512,6 +651,7 @@ function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped 
     let incoming: Origin = 'none';
     if (hit.direct) incoming = 'superglobal';
     else if (hit.viaVar) incoming = hit.source ?? 'superglobal';
+    if (incoming !== 'none' && hit.escaped) incoming = `${incoming as 'superglobal' | TaintSource}~`;
     for (const name of ev.names) {
       const store = ev.key !== undefined ? currentKeys : current;
       let previous = store.get(name) ?? 'none';
@@ -519,7 +659,9 @@ function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped 
         // Pierwsze przypisanie do klucza: poprzednia wartość to stan całej tablicy.
         previous = current.get(name.slice(0, name.length - ev.key.length - 2)) ?? 'none';
       }
-      const origin = incoming !== 'none' ? incoming : ev.compound ? previous : 'none';
+      // Dopisanie wartości po ucieczce cudzysłowów nie zdejmuje wcześniejszego, zwykłego skażenia.
+      const keepsPrevious = ev.compound && previous !== 'none' && incoming.endsWith('~') && !previous.endsWith('~');
+      const origin = keepsPrevious ? previous : incoming !== 'none' ? incoming : ev.compound ? previous : 'none';
       store.set(name, origin);
       const reset = ev.key === undefined && !ev.compound;
       if (reset) {
@@ -580,11 +722,17 @@ export class TaintAnalyzer {
   ) {}
 
   // Oznacza parametr funkcji jako źródło danych (na przykład $atts w callbacku shortcode).
-  // Trzeba to zrobić przed pierwszą analizą w tym zakresie.
-  seed(scope: AnyNode, name: string, source: TaintSource): void {
+  // Stan policzony wcześniej dla tego zakresu jest unieważniany i liczony od nowa.
+  seed(scope: AnyNode, name: string, source: TaintSource, cleanKeys?: string[]): void {
     const list = this.seeds.get(scope) ?? [];
-    list.push({ name, source });
+    list.push({ name, source, cleanKeys });
     this.seeds.set(scope, list);
+    this.cache.delete(scope);
+  }
+
+  // Czy parametr ma już przypisane źródło danych.
+  hasSeed(scope: AnyNode, name: string): boolean {
+    return (this.seeds.get(scope) ?? []).some((s) => s.name === name);
   }
 
   private scopeOf(stack: PhpNode[]): AnyNode {
@@ -594,21 +742,40 @@ export class TaintAnalyzer {
     return this.program;
   }
 
-  // stack to przodkowie ujścia z obchodu AST. expr to wyrażenie do oceny.
-  // at wskazuje węzeł, wg którego liczymy pozycję (domyślnie sam expr).
-  analyze(expr: unknown, stack: PhpNode[], at?: unknown): TaintHit {
-    const scope = this.scopeOf(stack);
+  private scoped(scope: AnyNode): Scoped {
     let scoped = this.cache.get(scope);
     if (!scoped) {
       scoped = buildScope(scope, this.spec, this.seeds.get(scope));
       this.cache.set(scope, scoped);
     }
+    return scoped;
+  }
+
+  // Klucze zmiennej-tablicy, które w danym miejscu mają znane, czyste elementy.
+  cleanKeysOf(name: string, stack: PhpNode[], at: unknown): string[] {
+    const scoped = this.scoped(this.scopeOf(stack));
+    const off = startOffset(at);
+    const prefix = name + '[';
+    const out: string[] = [];
+    for (const k of scoped.history.keys()) {
+      if (!k.startsWith(prefix) || !k.endsWith(']')) continue;
+      const key = k.slice(prefix.length, -1);
+      if (originKeyAt(scoped, name, key, off) === 'none') out.push(key);
+    }
+    return out;
+  }
+
+  // stack to przodkowie ujścia z obchodu AST. expr to wyrażenie do oceny.
+  // at wskazuje węzeł, wg którego liczymy pozycję (domyślnie sam expr).
+  analyze(expr: unknown, stack: PhpNode[], at?: unknown): TaintHit {
+    const scope = this.scopeOf(stack);
+    const scoped = this.scoped(scope);
     const off = startOffset(at ?? expr);
     const s = scoped;
     // Przodkowie od zakresu w dół, bo sprawdzenie poza funkcją niczego w niej nie potwierdza.
     const from = stack.lastIndexOf(scope as PhpNode);
     const guarded = guardedNames(from >= 0 ? stack.slice(from) : stack, off);
-    return evalTaint(
+    const hit = evalTaint(
       expr,
       this.spec,
       withGuard(
@@ -621,6 +788,8 @@ export class TaintAnalyzer {
         guarded,
       ),
     );
+    // Wartość w całości po ucieczce cudzysłowów nie jest już skażona, o ile nie trafiła poza cudzysłów.
+    return hit.escaped ? NONE : hit;
   }
 }
 
@@ -635,5 +804,6 @@ export function originText(hit: TaintHit, t: Translate): string {
   if (hit.source === 'url') return t('origin.url');
   if (hit.source === 'param') return t('origin.param');
   if (hit.source === 'shortcode') return t('origin.shortcode');
+  if (hit.source === 'caller') return t('origin.caller');
   return t('origin.user');
 }

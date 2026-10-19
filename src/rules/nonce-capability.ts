@@ -206,15 +206,19 @@ export const nonceCapabilityRule: Rule = {
 
     for (const h of handlers) {
       let body = h.body;
+      // Zgłaszamy w definicji uchwytu, bo tam trzeba dopisać sprawdzenie. Domknięcie leży w add_action.
+      let where: AnyNode = h.node;
       if (!body && h.methodRef) {
         const method = methodDefs.get(h.methodRef.cls)?.get(h.methodRef.method.toLowerCase());
         if (!method) continue; // klasa albo metoda spoza tego pliku
         body = method.body;
+        where = method;
       }
       if (!body && h.callbackName) {
         const fn = functionDefs.get(h.callbackName);
         if (!fn) continue; // uchwyt spoza tego pliku, nie oceniamy
         body = fn.body;
+        where = fn;
       }
       if (!body) continue;
 
@@ -225,7 +229,7 @@ export const nonceCapabilityRule: Rule = {
       const hasNonce = containsCall(body, NONCE_FUNCS);
       if (!hasNonce) {
         emit(
-          h.node,
+          where,
           ctx.t('auth.nonce.message', { hook: h.hook }),
           ['CWE-352'],
           ['4.2.2'],
@@ -235,7 +239,7 @@ export const nonceCapabilityRule: Rule = {
       // Uprawnień wymagamy tylko tam, gdzie działa zalogowany użytkownik.
       if (h.kind === 'priv' && !containsCall(body, CAP_FUNCS)) {
         emit(
-          h.node,
+          where,
           ctx.t('auth.capability.message', { hook: h.hook }),
           ['CWE-862'],
           ['4.1.3'],

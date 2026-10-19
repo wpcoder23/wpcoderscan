@@ -6,7 +6,8 @@
 import { buildXssPatch } from '../fix/xss-patch';
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
-import { collectDefinitions, resolveCallbackNode } from './callbacks';
+import { linkCallers } from './callers';
+import { findShortcodeHandlers, returnsArray } from './shortcodes';
 import { originText, TaintAnalyzer, viaText, XSS_SPEC } from './taint';
 import type { MessageKey } from '../i18n';
 import type { Finding, FileContext, Patch, PhpNode, Rule, Severity } from './types';
@@ -36,24 +37,13 @@ export const xssEchoRule: Rule = {
     // Atrybuty shortcode zapisuje autor wpisu, więc skutkiem jest zapisany XSS.
     const isStored = (hit: { source?: string }) => hit.source === 'shortcode';
 
-    // Callbacki add_shortcode z tego pliku: pierwszy parametr ($atts) to dane od autora wpisu.
+    // Funkcje obsługujące shortcode: atrybuty ($atts) to dane od autora wpisu.
     const shortcodeScopes = new Set<AnyNode>();
-    if (ctx.code.includes('add_shortcode')) {
-      const defs = collectDefinitions(ctx.ast);
-      walk(ctx.ast, (node, stack) => {
-        const n = node as AnyNode;
-        if (calledName(n) !== 'add_shortcode') return;
-        const cb = asNode(callArgs(n)[1]);
-        const target = cb ? resolveCallbackNode(cb, stack, defs) : undefined;
-        if (!target) return;
-        const params = Array.isArray(target.arguments) ? (target.arguments as unknown[]) : [];
-        const id = asNode(asNode(params[0])?.name);
-        if (typeof id?.name === 'string') {
-          taint.seed(target, id.name, 'shortcode');
-          shortcodeScopes.add(target);
-        }
-      });
+    for (const h of findShortcodeHandlers(ctx.ast, ctx.code)) {
+      taint.seed(h.scope, h.param, 'shortcode');
+      shortcodeScopes.add(h.scope);
     }
+    linkCallers(taint, ctx.ast, ctx.code);
 
     const report = (node: AnyNode, severity: Severity, message: string, patch?: Patch) => {
       const loc = nodeStart(node);
@@ -126,7 +116,7 @@ export const xssEchoRule: Rule = {
         for (let i = stack.length - 1; i >= 0 && !scope; i--) {
           if (['function', 'closure', 'method', 'arrowfunc'].includes(stack[i].kind)) scope = stack[i];
         }
-        if (scope && shortcodeScopes.has(scope as AnyNode) && n.expr) {
+        if (scope && shortcodeScopes.has(scope as AnyNode) && n.expr && !returnsArray(n.expr, scope as AnyNode)) {
           check(n.expr, n, 0, stack, 'shortcode');
         }
       } else if (n.kind === 'call') {

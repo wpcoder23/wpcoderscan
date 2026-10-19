@@ -5,6 +5,8 @@
 // heurystyką. Znaleziska, które pokrywa zwykła reguła SQL injection, pomijamy.
 import { walk } from '../parser';
 import { asNode, nodeStart, type AnyNode } from './ast-utils';
+import { linkCallers } from './callers';
+import { findShortcodeHandlers } from './shortcodes';
 import { SINKS, wpdbMethodCall } from './sqli';
 import { SQL_PARAM_SPEC, SQL_SPEC, TaintAnalyzer, viaText } from './taint';
 import type { Finding, FileContext, Rule } from './types';
@@ -20,6 +22,9 @@ export const sqliParamRule: Rule = {
     const findings: Finding[] = [];
     const base = new TaintAnalyzer(ctx.ast, SQL_SPEC);
     const extended = new TaintAnalyzer(ctx.ast, SQL_PARAM_SPEC);
+    // Źródła znane zwykłej regule (shortcode, wywołania z tego samego pliku) nie są zgłaszane drugi raz.
+    for (const h of findShortcodeHandlers(ctx.ast, ctx.code)) base.seed(h.scope, h.param, 'shortcode');
+    linkCallers(base, ctx.ast, ctx.code);
 
     walk(ctx.ast, (node, stack) => {
       const method = wpdbMethodCall(node);

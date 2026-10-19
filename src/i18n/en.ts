@@ -18,6 +18,7 @@ export const en = {
   'origin.url': 'from the current page URL (add_query_arg without a URL)',
   'origin.param': 'from a function parameter',
   'origin.shortcode': 'from shortcode attributes',
+  'origin.caller': 'passed in by a caller in this file, originally from user input',
   'origin.user': 'from user input',
 
   // SQL injection.
@@ -26,6 +27,12 @@ export const en = {
   'sqli.direct': '$wpdb->{method}() inserts user input into the query without prepare. Risk of SQL injection.',
   'sqli.viaVar':
     '$wpdb->{method}() builds the query without prepare from variable {var}, which holds data {origin}. Probable SQL injection.',
+  'sqli.unquoted':
+    '$wpdb->{method}() puts user input into the query outside quotes. esc_sql() and addslashes() protect only text inside quotes, so a number, column name or ORDER BY clause built this way can still be injected.',
+  'sqli.unquoted.viaVar':
+    '$wpdb->{method}() puts variable {var}, which holds data {origin}, into the query outside quotes. esc_sql() and addslashes() protect only text inside quotes, so a number, column name or ORDER BY clause built this way can still be injected.',
+  'sqli.unquoted.fix':
+    'Cast numbers with absint or (int). Check column names and sort direction against an allowlist. Escaping alone does not protect a value that stands outside quotes.',
   'sqli.param.message':
     '$wpdb->{method}() builds the query without prepare from the function parameter {var}. If user input reaches this function, it risks SQL injection.',
   'sqli.param.fix':
@@ -59,6 +66,10 @@ export const en = {
     'include or require with a path built from {from}. Risk of including a foreign file and executing code.',
   'rce.include.fix':
     'Do not build the path from input data. Use a fixed allowlist of files, or paths relative to the plugin directory.',
+  'rce.template.message':
+    '{name}() loads a template with a name built from {from}. A name with ../ can pull in a PHP file from outside the template folder.',
+  'rce.template.fix':
+    'Map the allowed template names to fixed files and reject anything else. Do not pass input straight into a template loader.',
   'rce.backtick.message': 'Backtick shell command built from {from}. Risk of operating system command injection.',
   'rce.shell.message': '{name}() runs a command built from {from}. Risk of operating system command injection.',
   'rce.shell.fix':
@@ -68,6 +79,9 @@ export const en = {
   'unserialize.full': '{name}() on superglobal data. Risk of PHP object injection.',
   'unserialize.limited':
     '{name}() on superglobal data with a restricted class list. Check that none of those classes has magic methods that can be abused.',
+  'unserialize.viaVar': '{name}() on variable {var}, which holds data {origin}. Possible PHP object injection.',
+  'unserialize.viaVar.limited':
+    '{name}() on variable {var}, which holds data {origin}, with a restricted class list. Check that none of those classes has magic methods that can be abused.',
   'unserialize.fix':
     'Do not deserialize user input. Use json_decode with JSON data, or if you must, enforce allowed_classes => false.',
   'unserialize.patch': 'Block object creation: add allowed_classes => false.',

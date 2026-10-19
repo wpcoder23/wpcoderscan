@@ -18,6 +18,7 @@ export const pl: Record<MessageKey, string> = {
   'origin.url': 'z adresu bieżącej strony (add_query_arg bez adresu)',
   'origin.param': 'z parametru funkcji',
   'origin.shortcode': 'z atrybutów shortcode',
+  'origin.caller': 'przekazane przez wywołanie w tym pliku, pierwotnie od użytkownika',
   'origin.user': 'od użytkownika',
 
   // SQL injection.
@@ -26,6 +27,12 @@ export const pl: Record<MessageKey, string> = {
   'sqli.direct': 'Wywołanie $wpdb->{method}() wkleja dane od użytkownika do zapytania bez prepare. Grozi SQL injection.',
   'sqli.viaVar':
     'Wywołanie $wpdb->{method}() używa zmiennej {var}, która zawiera dane {origin}, i buduje z niej zapytanie bez prepare. Prawdopodobny SQL injection.',
+  'sqli.unquoted':
+    'Wywołanie $wpdb->{method}() wkleja dane od użytkownika do zapytania poza cudzysłowem. Funkcje esc_sql() i addslashes() chronią tylko tekst w cudzysłowie. Liczba, nazwa kolumny albo ORDER BY zbudowane w ten sposób nadal pozwalają na SQL injection.',
+  'sqli.unquoted.viaVar':
+    'Wywołanie $wpdb->{method}() wkleja zmienną {var}, która zawiera dane {origin}, do zapytania poza cudzysłowem. Funkcje esc_sql() i addslashes() chronią tylko tekst w cudzysłowie. Liczba, nazwa kolumny albo ORDER BY zbudowane w ten sposób nadal pozwalają na SQL injection.',
+  'sqli.unquoted.fix':
+    'Rzutuj liczby na int albo użyj absint. Nazwy kolumn i kierunek sortowania sprawdź na liście dozwolonych wartości. Sama ucieczka nie chroni wartości, która stoi poza cudzysłowem.',
   'sqli.param.message':
     'Wywołanie $wpdb->{method}() buduje zapytanie z parametru {var} funkcji bez prepare. Jeśli do funkcji trafiają dane od użytkownika, grozi SQL injection.',
   'sqli.param.fix':
@@ -59,6 +66,10 @@ export const pl: Record<MessageKey, string> = {
     'include lub require ze ścieżką {from}. Grozi dołączeniem obcego pliku i wykonaniem kodu.',
   'rce.include.fix':
     'Nie buduj ścieżki z danych wejściowych. Użyj stałej listy dozwolonych plików (allowlista) albo ścieżek względem katalogu wtyczki.',
+  'rce.template.message':
+    '{name}() ładuje szablon o nazwie zbudowanej {from}. Nazwa z ../ może dołączyć plik PHP spoza katalogu szablonów.',
+  'rce.template.fix':
+    'Przypisz dozwolone nazwy szablonów do stałych plików i odrzucaj resztę. Nie przekazuj danych wejściowych wprost do funkcji ładującej szablon.',
   'rce.backtick.message': 'Polecenie w backtickach {from}. Grozi wstrzyknięciem polecenia systemowego.',
   'rce.shell.message': '{name}() uruchamia polecenie {from}. Grozi wstrzyknięciem polecenia systemowego.',
   'rce.shell.fix':
@@ -68,6 +79,9 @@ export const pl: Record<MessageKey, string> = {
   'unserialize.full': '{name}() na danych z superglobala. Grozi wstrzyknięciem obiektu PHP (object injection).',
   'unserialize.limited':
     '{name}() na danych z superglobala z ograniczoną listą klas. Sprawdź, czy żadna z nich nie ma metod magicznych, które można nadużyć.',
+  'unserialize.viaVar': '{name}() na zmiennej {var}, która zawiera dane {origin}. Możliwe wstrzyknięcie obiektu PHP (object injection).',
+  'unserialize.viaVar.limited':
+    '{name}() na zmiennej {var}, która zawiera dane {origin}, z ograniczoną listą klas. Sprawdź, czy żadna z nich nie ma metod magicznych, które można nadużyć.',
   'unserialize.fix':
     'Nie deserializuj danych od użytkownika. Użyj json_decode z danymi JSON, a jeśli musisz, wymuś allowed_classes => false.',
   'unserialize.patch': 'Zablokuj tworzenie obiektów: dodaj allowed_classes => false.',

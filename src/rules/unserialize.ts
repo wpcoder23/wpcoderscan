@@ -1,6 +1,7 @@
 // Reguła: unserialize na danych od użytkownika (PHP object injection).
 // unserialize na $_GET/$_POST/$_REQUEST/$_COOKIE pozwala wstrzyknąć obiekt
-// i wywołać łańcuch gadżetów. To wykrycie strukturalne, pewne.
+// i wywołać łańcuch gadżetów. To wykrycie strukturalne, pewne. Zmienna zasilona
+// takimi danymi daje heurystykę.
 import { walk } from '../parser';
 import { allowedClassesArg, detectArrayStyle, detectParenStyle } from '../fix/style';
 import {
@@ -13,6 +14,9 @@ import {
   type AnyNode,
   type DynInfo,
 } from './ast-utils';
+import { linkCallers } from './callers';
+import { guardedAsSerializedString } from './guards';
+import { CODE_SPEC, originText, TaintAnalyzer, viaText } from './taint';
 import type { Finding, FileContext, Patch, Rule } from './types';
 
 // unserialize i wrapper WordPressa maybe_unserialize niosą to samo ryzyko.
@@ -58,7 +62,9 @@ export const unserializeRule: Rule = {
   asvs: ['5.5.3'],
   check(ctx: FileContext): Finding[] {
     const findings: Finding[] = [];
-    walk(ctx.ast, (node) => {
+    const taint = new TaintAnalyzer(ctx.ast, CODE_SPEC);
+    linkCallers(taint, ctx.ast, ctx.code);
+    walk(ctx.ast, (node, stack) => {
       const n = node as AnyNode;
       const name = calledName(n);
       if (!name || !SINKS.has(name)) return;
@@ -68,17 +74,24 @@ export const unserializeRule: Rule = {
 
       const info: DynInfo = { hasVar: false, hasSuperglobal: false };
       analyzeDynamic(args[0], info);
-      if (!info.hasSuperglobal) return; // pewne tylko przy bezpośrednim superglobalu
+      // Pewne przy bezpośrednim superglobalu (albo filter_input, php://input), heurystyka przy zmiennej.
+      const hit = taint.analyze(args[0], stack);
+      const direct = info.hasSuperglobal || hit.direct;
+      if (!direct && !hit.viaVar) return;
       if (name === 'unserialize' && blocksObjects(args[1])) return; // obiekty już zablokowane
+      if (!direct && guardedAsSerializedString(stack as AnyNode[], nodeStart(n)?.offset ?? 0, args[0], ctx.code)) return;
       const patch = name === 'unserialize' && args.length === 1 ? buildPatch(ctx, n) : undefined;
       const limited = name === 'unserialize' && restrictsClasses(args[1]);
+      const params = { name, var: viaText(hit), origin: originText(hit, ctx.t) };
 
       const loc = nodeStart(n);
       findings.push({
         ruleId: unserializeRule.id,
         severity: limited ? 'medium' : 'high',
-        confidence: limited ? 'heuristic' : 'firm',
-        message: ctx.t(limited ? 'unserialize.limited' : 'unserialize.full', { name }),
+        confidence: limited || !direct ? 'heuristic' : 'firm',
+        message: direct
+          ? ctx.t(limited ? 'unserialize.limited' : 'unserialize.full', { name })
+          : ctx.t(limited ? 'unserialize.viaVar.limited' : 'unserialize.viaVar', params),
         file: ctx.file,
         line: loc?.line ?? 1,
         column: loc?.column ?? 0,

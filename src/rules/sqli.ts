@@ -8,6 +8,8 @@
 // wtyczkach to prawie zawsze fałszywy alarm.
 import { walk } from '../parser';
 import { asNode, nodeStart, offsetName, type AnyNode } from './ast-utils';
+import { linkCallers } from './callers';
+import { findShortcodeHandlers } from './shortcodes';
 import { originText, SQL_SPEC, TaintAnalyzer, viaText } from './taint';
 import type { Finding, FileContext, Rule } from './types';
 
@@ -38,6 +40,9 @@ export const sqliRule: Rule = {
   check(ctx: FileContext): Finding[] {
     const findings: Finding[] = [];
     const taint = new TaintAnalyzer(ctx.ast, SQL_SPEC);
+    // Atrybuty shortcode pochodzą od autora wpisu, więc są danymi użytkownika.
+    for (const h of findShortcodeHandlers(ctx.ast, ctx.code)) taint.seed(h.scope, h.param, 'shortcode');
+    linkCallers(taint, ctx.ast, ctx.code);
 
     walk(ctx.ast, (node, stack) => {
       const method = wpdbMethodCall(node);
@@ -61,7 +66,18 @@ export const sqliRule: Rule = {
         asvs: sqliRule.asvs,
         fix: ctx.t('sqli.fix'),
       };
-      if (hit.direct) {
+      if (hit.unquoted) {
+        // Wartość przeszła przez esc_sql albo addslashes, ale stoi w zapytaniu poza cudzysłowem.
+        findings.push({
+          ...base,
+          severity: 'high',
+          confidence: hit.direct ? 'firm' : 'heuristic',
+          message: hit.direct
+            ? ctx.t('sqli.unquoted', { method })
+            : ctx.t('sqli.unquoted.viaVar', { method, var: viaText(hit), origin: originText(hit, ctx.t) }),
+          fix: ctx.t('sqli.unquoted.fix'),
+        });
+      } else if (hit.direct) {
         findings.push({
           ...base,
           severity: 'critical',
