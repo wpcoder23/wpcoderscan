@@ -86,6 +86,8 @@ Dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` albo w wartości 
 
 Reguła zgłasza też dane użytkownika, które trafiają do HTML składanego w kodzie i niewypisywanego od razu. Liczą się trzy kształty. Funkcja zwraca tekst ze znacznikami HTML zbudowany z danych użytkownika. Zmienna zbiera taki HTML (`$html .= '<li>' . $_GET['x']`), a funkcja ją zwraca. Właściwość obiektu go przechowuje (`$this->content = '<div>' . $_GET['x'] . '</div>'`). Kod, który wypisuje wynik, często leży w innym pliku, więc takie zgłoszenia mają wagę średnią. Dane użytkownika wklejone do `do_shortcode()` są zgłaszane z tego samego powodu, bo odwiedzający może wtedy dodać własny shortcode albo atrybut.
 
+`sanitize_text_field`, `sanitize_textarea_field`, `wc_clean`, `sanitize_user`, `strip_tags` i `wp_strip_all_tags` usuwają znaczniki, ale zostawiają cudzysłowy. W treści strony chronią wartość. W atrybucie, w znaczniku i w skrypcie jej nie chronią, bo cudzysłów pozwala wartości wyjść ze swojego miejsca. Reguła czyta HTML, który kod wypisuje przed wartością, czyli literały i HTML poza blokami PHP. Zgłasza wartość tylko tam, gdzie taka funkcja nie wystarcza. Takie zgłoszenie ma wagę średnią. Gdy HTML wokół wartości nie jest znany, na przykład przy samym `echo sanitize_text_field( $x )`, reguła niczego nie zgłasza. `strip_tags` z listą dozwolonych znaczników nie liczy się jako czyszczenie, bo dozwolony znacznik może nieść atrybut z kodem. `html_entity_decode`, `urldecode` i inne dekodery cofają czyszczenie.
+
 ```php
 // Podatne
 <h2>Wyniki dla: <?php echo $_GET['q']; ?></h2>

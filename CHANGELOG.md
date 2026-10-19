@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+XSS findings now depend on where the value is printed. A function that only strips tags is enough in the text of a page and is not enough inside an attribute.
+
+On the 475 pairs of the main set, the default mode reports a finding of the right class within 25 lines of the CVE line in 180 cases (37.9%), up from 173 (36.4%). With `--extended` it is 198 (41.7%), up from 191 (40.2%). Seven XSS pairs are gained in both modes and none is lost. The second set of 301 pairs does not change: 62 (20.6%) with `--extended`, as in 0.8.1. On the 198 popular plugins the default mode prints 394 findings, down from 403, and the 112 plugins without a finding stay the same. With `--extended` it is 696 findings, down from 705. The blind sets were not run on this version, so the blind numbers of 0.8.0 stand.
+
+Twelve findings disappeared. In the hand review of 0.8.1, 11 of them were false alarms and 1 was an accurate finding of low risk. None of the real weaknesses is gone. Three findings are new and accurate: in contact-form-7-honeypot a stored setting is printed with `sanitize_text_field` inside the `value` attribute of an input, so a quote in the setting leaves the attribute. Only an administrator can save that setting, so the risk is low. One reviewer did the review and also wrote the change. The counts say what the review found, not how the scanner does on code that was not reviewed.
+
+- `wp.xss.echo_superglobal` reads the place of the value. `sanitize_text_field`, `sanitize_textarea_field`, `wc_clean`, `sanitize_user`, `strip_tags` with one argument and `wp_strip_all_tags` remove tags but keep quotes. After one of them the rule reports the value only inside a quoted attribute, inside a tag, in an unquoted value or in a script. The text of a page, a comment and a `style` block count as covered. Before, `sanitize_text_field` and its three siblings ended the taint everywhere, and `strip_tags` and `wp_strip_all_tags` never did.
+- The rule finds the place from the HTML that the code prints before the value, both literal text and inline HTML, also across several `echo` expressions and statements. When no HTML around the value is known, for example a bare `echo sanitize_text_field( $x )`, it reports nothing.
+- `strip_tags` with a list of allowed tags still passes the taint on, because an allowed tag can carry an attribute with code. `html_entity_decode`, `htmlspecialchars_decode`, `wp_specialchars_decode`, `urldecode`, `rawurldecode` and `base64_decode` undo the cleaning.
+- A finding of this kind has medium severity and its own message that says the function only strips tags and that quotes stay in the value.
+- `--suggest` and `--patch` wrap such a value in the escaper that matches its place, for example `esc_attr( sanitize_text_field( $x ) )` inside a quoted attribute. A value in the text of a page gets no patch, because it needs none.
+- Known gap. `printf` and `sprintf` do not read the place from the format string, so `printf( '<input value="%s">', sanitize_text_field( $x ) )` is not reported.
+- Known gap. `wp_kses`, `wp_kses_post` and `wp_kses_data` still count as a cleaning in an attribute. A value with quotes and no tags passes them.
+- Known gap. `esc_attr` and `esc_html` in an unquoted attribute, in a URL attribute, in an event handler and in a script are not reported.
+
 ## 0.8.1
 
 Fewer false alarms. The hits on the benchmark pairs do not change.

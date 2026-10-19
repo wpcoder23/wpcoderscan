@@ -86,6 +86,8 @@ The source can be a superglobal, `filter_input`, `add_query_arg` without a URL, 
 
 The rule also reports user input that lands in HTML which the code assembles and does not print itself. Three shapes count. A function returns a string with HTML tags built from user data. A variable collects such HTML (`$html .= '<li>' . $_GET['x']`) and the function returns it. A property stores it (`$this->content = '<div>' . $_GET['x'] . '</div>'`). The code that prints the result is often in another file, so these findings have medium severity. User data pasted into `do_shortcode()` is reported for the same reason, because a visitor can then add a shortcode or an attribute of their own.
 
+`sanitize_text_field`, `sanitize_textarea_field`, `wc_clean`, `sanitize_user`, `strip_tags` and `wp_strip_all_tags` remove tags but keep quotes. They protect a value in the text of a page. They do not protect it in an attribute, in a tag or in a script, because a quote lets the value leave its place. The rule reads the HTML that the code prints before the value, both literal text and inline HTML, and reports the value only where one of these functions is not enough. Such a finding has medium severity. When no HTML around the value is known, for example a bare `echo sanitize_text_field( $x )`, the rule reports nothing. `strip_tags` with a list of allowed tags does not count as cleaning, because an allowed tag can carry an attribute with code. `html_entity_decode`, `urldecode` and the other decoders undo the cleaning.
+
 ```php
 // Vulnerable
 <h2>Results for: <?php echo $_GET['q']; ?></h2>
