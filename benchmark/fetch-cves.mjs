@@ -1,12 +1,14 @@
 // Odświeża migawkę data/cves.json: wpisy CVE wtyczek WordPress z NVD, które mają odnośnik do
 // plugins.trac.wordpress.org z plikiem i linią w podatnej wersji. Dane z sieci są niezaufane, tylko je czytamy.
-// Użycie: node benchmark/fetch-cves.mjs [--from 2023] [--to 2025]
+// Użycie: node benchmark/fetch-cves.mjs [--from 2023] [--to 2025] [--out cves.json]
 // NVD ogranicza liczbę zapytań, więc pobranie trwa około godziny. Gotowa migawka leży w repozytorium.
+// Plik wynikowy leży w katalogu data/. Inna nazwa w --out pozwala zbudować osobny zbiór, na przykład ślepy.
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { args, here, sleep, vulnClass } from './common.mjs';
 
-const opt = args({ from: { type: 'string', default: '2023' }, to: { type: 'string', default: '2025' } });
+const opt = args({ from: { type: 'string', default: '2023' }, to: { type: 'string', default: '2025' }, out: { type: 'string', default: 'cves.json' } });
+const OUT_FILE = basename(opt.out);
 const KEYWORDS = [
   'wordpress plugin SQL Injection',
   'wordpress plugin Reflected Cross-Site Scripting',
@@ -59,5 +61,5 @@ for (const kw of KEYWORDS) {
   }
 }
 mkdirSync(join(here, 'data'), { recursive: true });
-writeFileSync(join(here, 'data', 'cves.json'), JSON.stringify([...out.values()]).replace(/\},\{"id"/g, '},\n{"id"') + '\n');
-console.log(`Saved ${out.size} entries to benchmark/data/cves.json`);
+writeFileSync(join(here, 'data', OUT_FILE), JSON.stringify([...out.values()]).replace(/\},\{"id"/g, '},\n{"id"') + '\n');
+console.log(`Saved ${out.size} entries to benchmark/data/${OUT_FILE}`);

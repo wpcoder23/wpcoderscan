@@ -3,19 +3,21 @@
 // raz, w trybie rozszerzonym, i liczy trafienia dwa razy: tylko regułami, które istniały przed nowymi
 // (kolumna before), i wszystkimi (kolumna after). Zestaw reguł dla każdej klasy jest ustalony niżej, przed
 // pomiarem, i nie zmienia się po obejrzeniu wyników.
-// Użycie: node benchmark/recall-extra.mjs --lib dist/index.js --out results/current-recall-extra.json [--window 25]
+// Użycie: node benchmark/recall-extra.mjs --lib dist/index.js --out results/current-recall-extra.json [--window 25] [--data cves-extra.json]
+// --data wskazuje plik w katalogu data/. Inny zbiór, na przykład ślepy, mierzy się tym samym skryptem.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { args, CACHE, download, extract, here, loadScanner, RESULTS } from './common.mjs';
 
 const opt = args({
   lib: { type: 'string', default: 'dist/index.js' },
   out: { type: 'string', default: join(RESULTS, 'current-recall-extra.json') },
+  data: { type: 'string', default: 'cves-extra.json' },
   window: { type: 'string', default: '25' },
 });
 const scan = await loadScanner(opt.lib);
 const WINDOW = Number(opt.window);
-const cves = JSON.parse(readFileSync(join(here, 'data', 'cves-extra.json'), 'utf8'));
+const cves = JSON.parse(readFileSync(join(here, 'data', basename(opt.data)), 'utf8'));
 
 const AUTHZ = ['wp.auth.unprotected_action', 'wp.rest.no_permission_callback'];
 

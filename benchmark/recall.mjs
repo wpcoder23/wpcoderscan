@@ -1,20 +1,22 @@
 // Pomiar recall na zbiorze CVE: pobiera podatne wersje wtyczek z wordpress.org, skanuje je (tylko czytanie
 // i parsowanie) i sprawdza, czy skaner zgłasza błąd tej samej klasy w pliku i blisko linii z odnośnika CVE.
-// Użycie: node benchmark/recall.mjs --lib dist/index.js --out results/current-recall.json [--extended] [--max 1000]
+// Użycie: node benchmark/recall.mjs --lib dist/index.js --out results/current-recall.json [--extended] [--max 1000] [--data cves.json]
+// --data wskazuje plik w katalogu data/. Inny zbiór, na przykład ślepy, mierzy się tym samym skryptem.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { args, CACHE, download, extract, here, loadScanner, RESULTS, RULES_FOR } from './common.mjs';
 
 const opt = args({
   lib: { type: 'string', default: 'dist/index.js' },
   out: { type: 'string', default: join(RESULTS, 'current-recall.json') },
+  data: { type: 'string', default: 'cves.json' },
   extended: { type: 'boolean', default: false },
   max: { type: 'string', default: '1000' },
   window: { type: 'string', default: '25' },
 });
 const scan = await loadScanner(opt.lib);
 const WINDOW = Number(opt.window);
-const cves = JSON.parse(readFileSync(join(here, 'data', 'cves.json'), 'utf8'));
+const cves = JSON.parse(readFileSync(join(here, 'data', basename(opt.data)), 'utf8'));
 
 // Jedna pozycja na parę (wtyczka, wersja). Stored XSS jest w NVD najliczniejszy i najtrudniejszy dla skanera
 // statycznego, więc bierzemy z niego pierwsze 80 wpisów, żeby nie przykrył innych klas. CSRF i klasy
