@@ -1,6 +1,7 @@
 # WPCoderScan
 
-[![npm](https://img.shields.io/npm/v/wpcoderscan.svg)](https://www.npmjs.com/package/wpcoderscan)
+[![release](https://img.shields.io/github/v/release/wpcoder23/wpcoderscan)](https://github.com/wpcoder23/wpcoderscan/releases)
+[![license](https://img.shields.io/github/license/wpcoder23/wpcoderscan)](LICENSE)
 [![CI](https://github.com/wpcoder23/wpcoderscan/actions/workflows/ci.yml/badge.svg)](https://github.com/wpcoder23/wpcoderscan/actions/workflows/ci.yml)
 
 Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję. Narzędzie dla deweloperów, vendorów i agencji, na czasy kodu generowanego przez AI.
@@ -12,6 +13,8 @@ To wczesny etap (v0.8.1). Architektura i część rozwiązań (raport, ocena, sk
 ## Szybki start
 
 Wymagany Node.js 18 lub nowszy. Skaner nie uruchamia kodu PHP. Czyta i parsuje pliki, więc można go bezpiecznie puścić na cudzym kodzie.
+
+Pakiet npm `wpcoderscan` nie jest jeszcze opublikowany. Do tego czasu uruchamiaj skaner z GitHuba: wszędzie, gdzie ta strona podaje `npx wpcoderscan`, użyj `npx github:wpcoder23/wpcoderscan`.
 
 ```bash
 npx wpcoderscan ./sciezka-do-wtyczki
