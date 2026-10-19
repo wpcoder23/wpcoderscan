@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.5.0
+## 0.6.0
+
+Five new rules in `--extended` mode, for bugs that the scanner did not look for before.
+
+The new rules look at file paths, outgoing HTTP requests, uploads, accounts and options. They are off by default, like the other extended rules. The main set of 475 pairs of a CVE and a plugin version gives the same result as in 0.5.0: 144 (30.3%) in the default mode and 162 (34.1%) with `--extended`. A second set of 301 pairs covers the classes of the new rules. With `--extended` the scanner reports a finding of the right class within 25 lines of the CVE line in 58 of them (19.3%). Without the new rules the same scan reports 12 (4.0%). The rules were tuned while that set was visible, so it is not a blind test. On the popular plugins the default mode is unchanged. Of the 200 plugins, 198 still download. They give 579 findings, a median of 1 per plugin and 96 plugins without a finding. With `--extended` the new rules add 43 findings in 19 of those plugins, all of them heuristics. The scanner also ran over 252 plugins and themes from a local disk (42 151 PHP files) without a crash. There is no false-positive rate. See `benchmark/README.md` for the method and its limits.
+
+- `wp.file.path_traversal` (CWE-22, and CWE-73 for writes). A file is read, written, copied or deleted at a path that comes from user input. It covers `file_get_contents`, `readfile`, `fopen`, `copy`, `rename`, `file_put_contents`, `unlink`, `wp_delete_file` and the `$wp_filesystem` methods. A path reduced with `basename`, a path that the function checks with `realpath` or `validate_file`, and a read or a delete of a file with a fixed harmless extension are not reported.
+- `wp.http.ssrf` (CWE-918). An HTTP request goes to an address that comes from user input (`wp_remote_*`, `curl_init`, `CURLOPT_URL`, `fsockopen`). User data appended after a fixed host is not reported. `wp_safe_remote_*` is outside the rule.
+- `wp.upload.unrestricted` (CWE-434). An uploaded file is saved under the client's name and nothing checks the file type, or `wp_handle_upload` runs with `test_type` turned off. A check before the save ends the report. So does a check after the save, when the function deletes the file that fails it.
+- `wp.privilege.escalation` (CWE-269). The role, the user meta key or the user ID that reaches `wp_insert_user`, `update_user_meta`, `wp_set_auth_cookie` and similar functions comes from the request, and nothing proves who the visitor is.
+- `wp.option.arbitrary_update` (CWE-915). The name of an option comes from user input (`update_option( $_POST['name'], ... )`). A fixed prefix, a check of the prefix before the write and a fixed ending lower the result or remove it.
+- Administrator gate. Code that only an administrator can reach is not an open door for a visitor. The path, address and upload rules give such a finding a low severity, and the account and option rules stay quiet. The scanner reads as a gate an administrator capability check, a menu page or a REST route registered with one, a hook registered only under such a check or after an early exit, a permission function named like an administrator check, and a helper that the same file calls only from code behind a gate. A nonce is not a gate. `check_admin_referer()` is not a gate. A gate in another file is not seen. See `docs/rules.md`.
+- The server sets `$_FILES['x']['tmp_name']`, `size` and `error`, so they no longer count as user input in any rule. The name and the type that the client sends still do.
+- Firm findings of the new rules, such as an option name taken straight from a superglobal, fail the build under `--extended` at the default `--fail-on high`. Heuristics only warn.
+- SARIF describes the new rules when the result contains them. Each new rule has a fix hint in English and in Polish.
+- The benchmark has a second set, `data/cves-extra.json` (326 CVE entries in 284 plugin versions, 302 pairs, 301 of them still download), and a script, `recall-extra.mjs`, that counts the hits with and without the new rules. `run.mjs` runs it together with the other measurements.
+- Known gap. CVE-2023-6827 (essential-real-estate 4.3.5) is missed, because the upload rule counts an extension check on zip entries after the save, followed by a delete, as validation.
 
 Better recall on known vulnerabilities, with the same noise on popular plugins.
 
