@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.0
+
+More hits on known vulnerabilities, less noise from the authorization rule, and the first blind test.
+
+On the 475 pairs of the main set, the default mode reports a finding of the right class within 25 lines of the CVE line in 173 cases (36.4%), up from 144 (30.3%). With `--extended` it is 191 (40.2%), up from 162 (34.1%). On the 198 popular plugins the default mode prints 517 findings, down from 579, and 100 plugins have none, up from 96.
+
+The rules were written while those sets were visible, so part of the gain is a better fit to known bugs. This is the first release measured on CVEs that no rule was written against. The blind set has 618 pairs from CVEs published in 2026. The default mode hits 80 of them (12.9%) and 0.7.0 hits 73 (11.8%). With `--extended` it is 129 (20.9%) against 121 (19.6%). That is the size of the gain to expect on new code.
+
+A hand review of the 517 findings of the default mode on the popular plugins counts 27 real weaknesses, 352 accurate findings of low risk, 137 false alarms and 1 unclear case. The review was done by one reviewer. The method and the table per rule are in `benchmark/README.md`.
+
+- Branches. An assignment inside an `if`, `switch`, loop or `catch` that may not run no longer clears the taint of the rest of the code. A full write inside a branch replaces the earlier writes of that same branch. A write in another branch of the same construct is not visible. A condition that tests the variable itself is the exception. The scanner knows where a write sits, but it does not evaluate conditions.
+- More functions carry taint. Functions that return a part or a copy of an argument now pass user input on: `strtr`, `strstr`, `str_pad`, `array_shift`, `array_column`, `current`, `wp_parse_args`, `dirname`, `trailingslashit` and similar. Functions that build a site address (`admin_url`, `home_url`) pass it only to XSS, because the host of such an address is fixed. The new functions do not carry the weak "function parameter" origin, so `wp.sqli.param_unprepared` does not grow. `parse_url` is not on the list.
+- Request writes. A default written into an element of a superglobal in one branch (`$_GET['x'] = 'a'`) no longer clears that element for the rest of the code. A write that sanitizes the value it reads from the same superglobal still clears it.
+- XSS sinks from the shape of the code. HTML built in a function and returned, HTML collected in a variable or a property, and `do_shortcode` count as sinks. These findings have medium severity, because the output context is a guess.
+- SQL clauses. The result of `posts_where`, `posts_orderby`, `posts_join` and the other `posts_*` filters, and the properties `query_where` and `query_orderby`, count as pieces of SQL. User input that reaches them is reported by `wp.sqli.unprepared`.
+- `wp.auth.unprotected_action` looks deeper. It searches for a nonce or capability check up to three calls deep. It counts a state change in a helper up to two calls deep, and only when the helper gets request data. It reads guard names in camelCase. It skips handlers that only change the profile of the logged-in user and handlers that dismiss a notice. Callbacks in namespaced classes are resolved. The `init` and `admin_init` hooks are no longer checked, because they gave noise and no additional vulnerability.
+- `wp.auth.unprotected_action` does not ask for a capability check in a handler that the same file registers for both `wp_ajax_` and `wp_ajax_nopriv_`, because such a handler is public by design. The exception ends when the handler changes a site option, another account or its password, a role, a plugin or theme, existing content or a file. On the popular plugins the rule prints 88 findings in 36 plugins instead of 164 in 47.
+- Benchmark. A third metric, `func`, counts a finding of the right class in the same function as the CVE line, next to `near` and `file`. The option `--data` selects a CVE set. Two new sets, `cves-2026.json` and `cves-extra-2026.json`, hold CVEs published in 2026 and serve as the blind test. Only totals are recorded for them.
+- Known gap. CVE-2025-11758 (aio-time-clock-lite 2.0.1) is no longer a near hit. The handlers are registered for visitors too, so the rule reads them as public by design, although the actions are meant for administrators.
+- Known gap. `wp.option.no_sanitize_callback` reports a `register_setting` call that passes a callable array such as `[ $this, 'sanitize' ]` as the third argument. WordPress accepts a callable there and uses it as the sanitize callback. On the popular plugins this is 81 of the 281 findings of the rule, and the largest group of false alarms in the review.
+- Known gap. The scanner does not model an early `return` or `exit` inside a branch, and it does not evaluate the condition that picks the branch.
+
 ## 0.7.0
 
 Adopting the scanner in an existing codebase. A baseline, ignore comments and a settings file let a team start with a clean gate, accept reviewed findings and fix the old ones over time.
