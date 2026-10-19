@@ -12,6 +12,11 @@ export const pl: Record<MessageKey, string> = {
   'rule.wp.secret.hardcoded.title': 'Zaszyty sekret w kodzie',
   'rule.wp.xss.echo_superglobal.title': 'Dane użytkownika w echo lub print bez ucieczki',
   'rule.wp.auth.unprotected_action.title': 'Uchwyt akcji bez weryfikacji nonce lub uprawnień',
+  'rule.wp.file.path_traversal.title': 'Odczyt, zapis lub usunięcie pliku pod ścieżką od użytkownika',
+  'rule.wp.http.ssrf.title': 'Żądanie HTTP pod adres od użytkownika',
+  'rule.wp.upload.unrestricted.title': 'Wysyłanie pliku bez sprawdzenia typu',
+  'rule.wp.privilege.escalation.title': 'Rola, logowanie lub uprawnienia konta sterowane przez żądanie',
+  'rule.wp.option.arbitrary_update.title': 'Nazwa opcji sterowana danymi od użytkownika',
 
   // Pochodzenie danych.
   'origin.request': 'z żądania REST',
@@ -74,6 +79,52 @@ export const pl: Record<MessageKey, string> = {
   'rce.shell.message': '{name}() uruchamia polecenie {from}. Grozi wstrzyknięciem polecenia systemowego.',
   'rce.shell.fix':
     'Unikaj powłoki. Jeśli musisz, przekaż argumenty przez escapeshellarg i nie sklejaj ich w tekst polecenia.',
+
+  // Reguły ujść: pliki, adresy HTTP, wysyłanie plików, role i opcje.
+  'from.direct': 'od użytkownika',
+  'from.viaVar': 'ze zmiennej {var} zasilonej danymi {origin}',
+  'file.read.message':
+    '{name}() czyta plik spod ścieżki {from}. Atakujący może odczytać pliki takie jak wp-config.php.',
+  'file.write.message':
+    '{name}() zapisuje plik pod ścieżką {from}. Atakujący może nadpisać pliki albo podrzucić kod PHP.',
+  'file.delete.message':
+    '{name}() usuwa plik spod ścieżki {from}. Atakujący może usunąć pliki takie jak wp-config.php i przejąć witrynę.',
+  'file.fix':
+    'Nie buduj ścieżki z danych wejściowych. Przypisz dozwolone nazwy do stałych plików albo zredukuj dane do nazwy pliku przez wp_basename() i sprawdź, że realpath() leży w oczekiwanym katalogu.',
+  'ssrf.message':
+    '{name}() wysyła żądanie pod adres {from}. Atakujący może skierować serwer do usług wewnętrznych albo obcych hostów.',
+  'ssrf.fix':
+    'Nie bierz adresu z danych wejściowych. Użyj stałego adresu albo sprawdź host na liście dozwolonych. wp_safe_remote_get() odrzuca adresy wewnętrzne, a wp_http_validate_url() sprawdza adres.',
+  'upload.move.message':
+    'move_uploaded_file() zapisuje plik pod nazwą {from}, a nic w tej funkcji nie sprawdza typu pliku. Atakujący może wysłać skrypt PHP i uruchomić kod.',
+  'upload.notype.message':
+    '{name}() działa z wyłączonym sprawdzaniem typu pliku (test_type ustawione na false). Atakujący może wysłać skrypt PHP i uruchomić kod.',
+  'upload.fix':
+    'Sprawdź rozszerzenie i typ na liście dozwolonych przez wp_check_filetype_and_ext(), nazwę pliku nadaj sam (wp_unique_filename()) i nie zapisuj wysłanych plików tam, gdzie serwer wykonuje PHP.',
+  'privilege.role.message':
+    'Rola konta jest ustawiana wartością {from}. Atakujący może nadać sobie rolę administratora.',
+  'privilege.setrole.message':
+    '{name} ustawia rolę wartością {from}. Atakujący może nadać sobie rolę administratora.',
+  'privilege.userdata.message':
+    '{name}() dostaje całe żądanie jako dane konta, więc żądanie ustawia też rolę. Atakujący może utworzyć konto administratora.',
+  'privilege.meta.message':
+    '{name}() zapisuje meta użytkownika pod kluczem {from}. Atakujący może zapisać klucz wp_capabilities i zostać administratorem.',
+  'privilege.caps.message':
+    '{name}() zapisuje uprawnienia konta wartością {from}. Atakujący może nadać sobie dowolne uprawnienia.',
+  'privilege.login.message':
+    '{name}() loguje konto o identyfikatorze {from}. Nic w tej funkcji nie dowodzi, kim jest odwiedzający. Atakujący może zalogować się jako dowolny użytkownik, także administrator.',
+  'privilege.role.fix':
+    'Nie bierz roli z żądania. Ustaw stałą rolę (na przykład subscriber), a wybór roli zostaw użytkownikom z uprawnieniem promote_users.',
+  'privilege.meta.fix':
+    'Użyj stałego klucza albo listy dozwolonych kluczy. Nie pozwól, żeby żądanie wybierało klucz, który może być wp_capabilities lub wp_user_level.',
+  'privilege.login.fix':
+    'Loguj konto dopiero po udowodnieniu tożsamości, na przykład sprawdzeniem hasła, jednorazowym tokenem porównanym przez hash_equals() albo podpisanym linkiem. Nie ufaj identyfikatorowi użytkownika z żądania.',
+  'option.update.message':
+    '{name}() zmienia opcję o nazwie {from}. Atakujący może zmienić ustawienia takie jak default_role albo users_can_register i przejąć witrynę.',
+  'option.delete.message':
+    '{name}() usuwa opcję o nazwie {from}. Atakujący może usunąć opcje rdzenia i zepsuć witrynę.',
+  'option.fix':
+    'Nie bierz nazwy opcji z danych wejściowych. Użyj stałej nazwy albo sprawdź ją na liście własnych opcji i wymagaj uprawnienia, na przykład manage_options.',
 
   // Deserializacja.
   'unserialize.full': '{name}() na danych z superglobala. Grozi wstrzyknięciem obiektu PHP (object injection).',

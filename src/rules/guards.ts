@@ -61,6 +61,38 @@ function literal(node: unknown): boolean {
   return !!n && (n.kind === 'string' || n.kind === 'number');
 }
 
+// Sprawdzenie, że wartość zaczyna się od stałego przedrostka: str_starts_with( $v, 'abc_' ), strpos( $v, 'abc_' ) === 0,
+// strncmp( $v, 'abc_', 4 ) === 0. Przedrostek zawęża wartość do rodziny, na przykład do opcji wtyczki, ale nie czyści jej
+// dla SQL, XSS ani ścieżki, więc ten tryb włącza tylko specyfikacja, dla której zawężenie wystarcza.
+const MIN_PREFIX = 4;
+const PREFIX_CALLS = new Set(['strpos', 'stripos', 'strncmp', 'strncasecmp']);
+
+function prefixCall(node: unknown, out: Set<string>): boolean {
+  const call = asNode(node);
+  if (!call || call.kind !== 'call') return false;
+  const args = Array.isArray(call.arguments) ? (call.arguments as unknown[]) : [];
+  const text = asNode(args[1]);
+  if (!text || text.kind !== 'string' || typeof text.value !== 'string' || text.value.length < MIN_PREFIX) return false;
+  names(args[0], out);
+  return true;
+}
+
+// strpos( $v, 'abc_' ) === 0 albo 0 === strpos( ... ). Dla strpos tylko ścisłe porównanie, bo false == 0.
+function prefixComparison(test: AnyNode, out: Set<string>, equal: boolean): void {
+  const strict = test.type === (equal ? '===' : '!==');
+  const loose = test.type === (equal ? '==' : '!=');
+  if (!strict && !loose) return;
+  const zero = (node: unknown): boolean => {
+    const n = asNode(node);
+    return !!n && n.kind === 'number' && n.value === '0';
+  };
+  const call = zero(test.right) ? asNode(test.left) : zero(test.left) ? asNode(test.right) : undefined;
+  if (!call || call.kind !== 'call') return;
+  const fn = calledName(call) ?? '';
+  if (!PREFIX_CALLS.has(fn) || (loose && (fn === 'strpos' || fn === 'stripos'))) return;
+  prefixCall(call, out);
+}
+
 // Zakotwiczone na obu końcach wyrażenie (/^[a-z-]+$/) działa jak lista dozwolonych znaków.
 // Wzorce z dowolnym ciągiem (.* albo .+) niczego nie ograniczają.
 function anchored(src: string): boolean {
@@ -106,17 +138,29 @@ function rejectsOtherChars(src: string): boolean {
   return /^(?:\[\^(?:[^\]\\]|\\.)+\]|\\W|\\D)\+?$/.test(src.slice(1, end));
 }
 
+// Klucz użyty do odczytu elementu cudzej tablicy (nie superglobala). Skoro element istnieje, klucz jest jednym z
+// kluczy tej tablicy, czyli wartością z listy dozwolonych.
+function existingElementKey(expr: unknown, out: Set<string>): void {
+  const lookup = asNode(expr);
+  if (!lookup || lookup.kind !== 'offsetlookup') return;
+  const base = baseVariable(lookup.what);
+  // Klucz z superglobala nic nie potwierdza.
+  if (base && base.kind === 'variable' && SUPERGLOBALS.has(base.name as string)) return;
+  names(lookup.offset, out);
+}
+
 // Zmienne, które ten warunek potwierdza, gdy jest prawdziwy.
-export function confirmedBy(test: unknown, out = new Set<string>()): Set<string> {
+export function confirmedBy(test: unknown, out = new Set<string>(), prefix = false): Set<string> {
   const t = asNode(test);
   if (!t) return out;
   if (t.kind === 'bin') {
     if (t.type === '&&' || t.type === 'and') {
-      confirmedBy(t.left, out);
-      confirmedBy(t.right, out);
+      confirmedBy(t.left, out, prefix);
+      confirmedBy(t.right, out, prefix);
     } else if (t.type === '==' || t.type === '===') {
       if (literal(t.right)) names(t.left, out);
       else if (literal(t.left)) names(t.right, out);
+      if (prefix) prefixComparison(t, out, true);
     }
     return out;
   }
@@ -124,6 +168,7 @@ export function confirmedBy(test: unknown, out = new Set<string>()): Set<string>
     const fn = calledName(t) ?? '';
     const args = Array.isArray(t.arguments) ? (t.arguments as unknown[]) : [];
     if (MEMBERSHIP.has(fn) || TYPE_CHECKS.has(fn)) names(args[0], out);
+    else if (prefix && fn === 'str_starts_with') prefixCall(t, out);
     else if (fn === 'preg_match') {
       const re = asNode(args[0]);
       const src = re?.kind === 'string' && typeof re.value === 'string' ? re.value : '';
@@ -135,26 +180,33 @@ export function confirmedBy(test: unknown, out = new Set<string>()): Set<string>
   }
   if (t.kind === 'isset') {
     const vars = Array.isArray(t.variables) ? (t.variables as unknown[]) : [];
-    for (const v of vars) {
-      const lookup = asNode(v);
-      if (!lookup || lookup.kind !== 'offsetlookup') continue;
-      const base = baseVariable(lookup.what);
-      // Klucz z superglobala nic nie potwierdza.
-      if (base && base.kind === 'variable' && SUPERGLOBALS.has(base.name as string)) continue;
-      names(lookup.offset, out);
-    }
+    for (const v of vars) existingElementKey(v, out);
+    return out;
+  }
+  // ! empty( $lista[ $klucz ] ) działa jak isset( $lista[ $klucz ] ).
+  if (t.kind === 'unary' && t.type === '!') {
+    const inner = asNode(t.what);
+    if (inner && inner.kind === 'empty') existingElementKey(inner.expression, out);
   }
   return out;
 }
 
 // Zmienne potwierdzone, gdy warunek jest fałszywy: !A albo A || B po negacjach.
-export function confirmedByNegation(test: unknown, out = new Set<string>()): Set<string> {
+export function confirmedByNegation(test: unknown, out = new Set<string>(), prefix = false): Set<string> {
   const t = asNode(test);
   if (!t) return out;
-  if (t.kind === 'unary' && t.type === '!') return confirmedBy(t.what, out);
+  if (t.kind === 'unary' && t.type === '!') return confirmedBy(t.what, out, prefix);
+  // Gdy empty( $lista[ $klucz ] ) jest fałszywe, element istnieje.
+  if (t.kind === 'empty') {
+    existingElementKey(t.expression, out);
+    return out;
+  }
   if (t.kind === 'bin' && (t.type === '||' || t.type === 'or')) {
-    confirmedByNegation(t.left, out);
-    confirmedByNegation(t.right, out);
+    confirmedByNegation(t.left, out, prefix);
+    confirmedByNegation(t.right, out, prefix);
+  } else if (prefix && t.kind === 'bin' && (t.type === '!==' || t.type === '!=')) {
+    // Gdy strpos( $v, 'abc_' ) !== 0 jest fałszywe, wartość zaczyna się od przedrostka.
+    prefixComparison(t, out, false);
   } else if (t.kind === 'call' && calledName(t) === 'preg_match') {
     // Gdy wzorzec odrzucający obce znaki nie pasuje, wartość ma tylko dozwolone znaki.
     const args = Array.isArray(t.arguments) ? (t.arguments as unknown[]) : [];
@@ -179,27 +231,59 @@ function exits(body: unknown): boolean {
 }
 
 // Zmienne sprawdzone przed miejscem o przesunięciu off, na podstawie przodków ujścia.
-export function guardedNames(ancestors: readonly AnyNode[], off: number): Set<string> {
+export function guardedNames(ancestors: readonly AnyNode[], off: number, prefix = false): Set<string> {
   const out = new Set<string>();
   for (const a of ancestors) {
     const n = a as AnyNode;
     if (n.kind === 'if') {
-      if (contains(n.body, off)) confirmedBy(n.test, out);
-      else if (n.alternate && contains(n.alternate, off)) confirmedByNegation(n.test, out);
+      if (contains(n.body, off)) confirmedBy(n.test, out, prefix);
+      else if (n.alternate && contains(n.alternate, off)) confirmedByNegation(n.test, out, prefix);
     } else if (n.kind === 'retif') {
-      if (contains(n.trueExpr, off)) confirmedBy(n.test, out);
-      else if (contains(n.falseExpr, off)) confirmedByNegation(n.test, out);
+      if (contains(n.trueExpr, off)) confirmedBy(n.test, out, prefix);
+      else if (contains(n.falseExpr, off)) confirmedByNegation(n.test, out, prefix);
     } else if ((n.kind === 'block' || n.kind === 'program') && Array.isArray(n.children)) {
       for (const child of n.children as unknown[]) {
         const c = asNode(child);
         const r = range(c);
         if (!c || !r || r[0] >= off) break;
         // Wczesne wyjście: if ( ! in_array( $v, ... ) ) { return; } potwierdza $v dla dalszego kodu.
-        if (c.kind === 'if' && !c.alternate && r[1] <= off && exits(c.body)) confirmedByNegation(c.test, out);
+        if (c.kind === 'if' && !c.alternate && r[1] <= off && exits(c.body)) confirmedByNegation(c.test, out, prefix);
       }
     }
   }
   return out;
+}
+
+// Czy kod w miejscu off działa tylko przy spełnionym warunku. Warunek stoi w teście otaczającego if (holds dla
+// ciała, fails dla gałęzi else) albo w teście wcześniejszego if z wyjściem w tym samym albo wyższym bloku.
+// Przodkowie to łańcuch od otaczającej funkcji do miejsca, bez węzła samego miejsca.
+export function guardedAt(
+  ancestors: readonly AnyNode[],
+  off: number,
+  holds: (test: AnyNode) => boolean,
+  fails: (test: AnyNode) => boolean,
+): boolean {
+  for (const n of ancestors) {
+    if (n.kind === 'if') {
+      const test = asNode(n.test);
+      if (!test) continue;
+      if (contains(n.body, off)) {
+        if (holds(test)) return true;
+      } else if (n.alternate && contains(n.alternate, off) && fails(test)) {
+        return true;
+      }
+    } else if ((n.kind === 'block' || n.kind === 'program') && Array.isArray(n.children)) {
+      for (const child of n.children as unknown[]) {
+        const c = asNode(child);
+        const r = range(c);
+        if (!c || !r || r[0] >= off) break;
+        if (c.kind !== 'if' || c.alternate || r[1] > off || !exits(c.body)) continue;
+        const test = asNode(c.test);
+        if (test && fails(test)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 // Tekst węzła bez białych znaków, do porównania dwóch zapisów tego samego wyrażenia.

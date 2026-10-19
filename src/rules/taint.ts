@@ -55,6 +55,24 @@ export interface TaintSpec {
   queryArgSource?: boolean;
   // Parametry funkcji liczymy jako dane o nieznanym pochodzeniu (tryb rozszerzony).
   paramSource?: boolean;
+  // Rzutowanie na liczbę nie zdejmuje skażenia. Tak jest, gdy liczba wybiera zasób (identyfikator
+  // użytkownika), więc atakujący nadal decyduje o wyniku mimo (int).
+  keepCasts?: boolean;
+  // Funkcje, które przenoszą skażenie z argumentów na wynik poza wspólną listą (na przykład wyszukanie
+  // użytkownika po adresie e-mail z żądania).
+  extraPassthrough?: ReadonlySet<string>;
+  // foreach po tablicy zbudowanej z literalnymi kluczami nie skaża zmiennej klucza, bo klucze wybiera autor
+  // kodu, a od użytkownika pochodzą tylko wartości.
+  literalKeys?: boolean;
+  // $plik['tmp_name'], $plik['size'] i $plik['error'] w zmiennej to wpis tablicy wysłanego pliku. Te pola
+  // ustawia serwer, więc ścieżka pliku tymczasowego nie jest ścieżką od użytkownika.
+  fileEntriesClean?: boolean;
+  // preg_replace( '/[^a-z0-9_-]/i', '', $nazwa ) zostawia tylko znaki z klasy. Bez ukośnika w klasie wynik
+  // nie ma separatora, więc nie jest ścieżką wychodzącą poza katalog.
+  pathSanitizer?: boolean;
+  // Sprawdzenie stałego przedrostka (str_starts_with, strpos( $v, 'abc_' ) === 0) zawęża wartość na tyle, że nie jest
+  // już dowolna. Dotyczy nazw opcji: przedrostek wtyczki ogranicza zapis do jej własnych opcji.
+  prefixGuards?: boolean;
 }
 
 const NONE: TaintHit = { direct: false, viaVar: false };
@@ -108,6 +126,63 @@ const SERVER_SAFE_KEYS = new Set([
   'argv',
   'argc',
 ]);
+
+// Elementy $_FILES ustawiane przez serwer: nazwa pliku tymczasowego, rozmiar i kod błędu. Nazwa pliku z komputera
+// użytkownika (name, full_path) i typ MIME to dane od klienta, więc zostają skażone.
+const FILES_SERVER_KEYS = new Set(['tmp_name', 'size', 'error']);
+
+// $_FILES[ pole ][ 'tmp_name' ] i dalsze indeksy (przy wielu plikach): drugi poziom kluczy to właściwość pliku.
+function isServerFilesElement(n: AnyNode): boolean {
+  const keys: Array<string | undefined> = [];
+  let cur: AnyNode | undefined = n;
+  while (cur && cur.kind === 'offsetlookup') {
+    const k = asNode(cur.offset);
+    keys.unshift(k && k.kind === 'string' && typeof k.value === 'string' ? k.value : undefined);
+    cur = asNode(cur.what);
+  }
+  const key = keys[1];
+  return !!cur && cur.kind === 'variable' && cur.name === '_FILES' && key !== undefined && FILES_SERVER_KEYS.has(key);
+}
+
+// Superglobale, w których pole tmp_name oznaczałoby dane podane przez atakującego, a nie wpis $_FILES.
+const REQUEST_GLOBALS = new Set(['_GET', '_POST', '_REQUEST', '_COOKIE']);
+
+// $plik['tmp_name'] i $pliki['pole']['tmp_name'][ $i ] w zmiennej, która najpewniej trzyma wpis $_FILES
+// (przypisany wcześniej albo przekazany do funkcji).
+function isFilesEntryOfVariable(n: AnyNode): boolean {
+  let found = false;
+  let cur: AnyNode | undefined = n;
+  while (cur && cur.kind === 'offsetlookup') {
+    const k = asNode(cur.offset);
+    if (k && k.kind === 'string' && typeof k.value === 'string' && FILES_SERVER_KEYS.has(k.value)) found = true;
+    cur = asNode(cur.what);
+  }
+  return found && !!cur && cur.kind === 'variable' && typeof cur.name === 'string' && !REQUEST_GLOBALS.has(cur.name);
+}
+
+// Czy klasa znaków [^...] pozwala na ukośnik albo odwrotny ukośnik (zapisany wprost albo z ucieczką).
+function classAllowsSeparator(body: string): boolean {
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === '/') return true;
+    if (c === '\\') {
+      if (body[i + 1] === '/' || body[i + 1] === '\\') return true;
+      i++;
+    }
+  }
+  return false;
+}
+
+// preg_replace( '/[^a-z0-9_-]/i', '', $nazwa ): usuwa wszystko poza klasą, a w klasie nie ma separatora ścieżki.
+function stripsPathSeparators(pattern: unknown, replacement: unknown): boolean {
+  const p = literalString(pattern);
+  const r = literalString(replacement);
+  if (p === undefined || r === undefined || /[\\/]/.test(r)) return false;
+  for (const m of p.matchAll(/\[\^((?:\\.|[^\]\\])*)\]/g)) {
+    if (!classAllowsSeparator(m[1])) return true;
+  }
+  return false;
+}
 
 // Funkcje, które przenoszą skażenie z argumentów na wynik.
 const PASSTHROUGH = new Set([
@@ -183,6 +258,34 @@ export const INCLUDE_SPEC: TaintSpec = { clean: new Set(INCLUDE_CLEAN) };
 export const EXEC_SPEC: TaintSpec = { clean: new Set(EXEC_CLEAN) };
 export const XSS_SPEC: TaintSpec = { clean: new Set(XSS_CLEAN), queryArgSource: true };
 
+// Ścieżka pliku: basename i sanitize_file_name zostawiają z nazwy tylko jej ostatni człon, więc nie da się
+// wyjść poza katalog. Wynik wp_unique_filename też jest oczyszczoną nazwą.
+export const PATH_SPEC: TaintSpec = {
+  clean: new Set([...INCLUDE_CLEAN, 'wp_basename', 'wp_unique_filename']),
+  literalKeys: true,
+  fileEntriesClean: true,
+  pathSanitizer: true,
+};
+// Adres URL, nazwa opcji, rola: liczby są czyste, a oczyszczanie tekstu niczego nie zmienia.
+export const KEY_SPEC: TaintSpec = { clean: new Set(COMMON_CLEAN), literalKeys: true, prefixGuards: true };
+// Nazwa wysyłanego pliku: basename, sanitize_file_name i wp_unique_filename zostawiają rozszerzenie, więc
+// skażenie przechodzi dalej. O skutku decyduje rozszerzenie, nie sama ścieżka.
+export const UPLOAD_SPEC: TaintSpec = {
+  clean: new Set(COMMON_CLEAN),
+  extraPassthrough: new Set(['basename', 'wp_basename', 'sanitize_file_name', 'wp_unique_filename', 'pathinfo']),
+  literalKeys: true,
+};
+// Wyszukanie użytkownika po danych z żądania i rzutowanie na liczbę nie zmieniają tego, że wybiera go atakujący.
+export const LOGIN_SPEC: TaintSpec = {
+  clean: new Set(),
+  keepCasts: true,
+  literalKeys: true,
+  extraPassthrough: new Set([
+    'intval', 'absint', 'get_user_by', 'get_userdata', 'get_user_by_email', 'get_userbylogin',
+    'email_exists', 'username_exists', 'get_user',
+  ]),
+};
+
 // Jak groźne jest skażenie: 0 po ucieczce cudzysłowów (bezpieczne w cudzysłowie), 1 po ucieczce poza
 // cudzysłowem, 2 zwykłe. Przy łączeniu wygrywa groźniejsze, bo jeden niezabezpieczony składnik wystarcza.
 function danger(h: TaintHit): number {
@@ -228,7 +331,7 @@ function insideQuotes(sql: string): boolean {
 }
 
 // Składniki sklejanego tekstu po kolei: operandy łańcucha kropek i części napisu w cudzysłowie.
-function chainParts(node: unknown, out: AnyNode[]): void {
+export function chainParts(node: unknown, out: AnyNode[]): void {
   const n = asNode(node);
   if (!n) return;
   if (n.kind === 'bin' && n.type === '.') {
@@ -241,7 +344,7 @@ function chainParts(node: unknown, out: AnyNode[]): void {
   }
 }
 
-function literalString(v: unknown): string | undefined {
+export function literalString(v: unknown): string | undefined {
   const n = asNode(v);
   return n && n.kind === 'string' && typeof n.value === 'string' ? n.value : undefined;
 }
@@ -317,6 +420,8 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
     case 'offsetlookup': {
       const base = baseVariable(n);
       if (base && base.kind === 'variable' && typeof base.name === 'string') {
+        if (base.name === '_FILES' && isServerFilesElement(n)) return NONE;
+        if (spec.fileEntriesClean && isFilesEntryOfVariable(n)) return NONE;
         if (base.name === '_SERVER') {
           const key = literalString(n.offset);
           if (key !== undefined && SERVER_SAFE_KEYS.has(key)) return NONE;
@@ -342,7 +447,7 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
       return evalTaint(n.what, spec, env);
     }
     case 'cast':
-      return NEUTRAL_CASTS.has(String(n.type ?? '').toLowerCase())
+      return NEUTRAL_CASTS.has(String(n.type ?? '').toLowerCase()) && !spec.keepCasts
         ? NONE
         : evalTaint(n.expr, spec, env);
     case 'silent':
@@ -357,8 +462,8 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
       return evalTaint(n.value, spec, env);
     case 'retif': {
       // W gałęziach warunku działa to, co sam warunek potwierdza: is_numeric( $v ) ? $v : 0.
-      const yes = n.trueExpr ? confirmedBy(n.test) : undefined;
-      const no = confirmedByNegation(n.test);
+      const yes = n.trueExpr ? confirmedBy(n.test, undefined, spec.prefixGuards) : undefined;
+      const no = confirmedByNegation(n.test, undefined, spec.prefixGuards);
       return merge(
         evalTaint(n.trueExpr ?? n.test, spec, yes ? withGuard(env, yes) : env),
         evalTaint(n.falseExpr, spec, withGuard(env, no)),
@@ -369,6 +474,7 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
       if (name) {
         if (spec.clean.has(name)) return NONE;
         const args = Array.isArray(n.arguments) ? (n.arguments as unknown[]) : [];
+        if (spec.pathSanitizer && name === 'preg_replace' && stripsPathSeparators(args[0], args[1])) return NONE;
         if (spec.escapers?.has(name)) return escapedHit(evalTaint(args[0], spec, env));
         if (isRawInputCall(name, args)) return { direct: true, viaVar: false };
         if (spec.queryArgSource && queryArgWithoutUrl(name, args)) {
@@ -385,7 +491,7 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
           const fn = literalString(args[1]);
           if (fn !== undefined && spec.clean.has(fn.toLowerCase())) return NONE;
         }
-        return PASSTHROUGH.has(name) ? evalTaint(args, spec, env) : NONE;
+        return PASSTHROUGH.has(name) || spec.extraPassthrough?.has(name) ? evalTaint(args, spec, env) : NONE;
       }
       // Wywołanie metody. Interesuje nas tylko $wpdb->prepare i pokrewne.
       const callee = asNode(n.what);
@@ -480,9 +586,73 @@ function startOffset(node: unknown): number {
   return loc?.start?.offset ?? Number.MAX_SAFE_INTEGER;
 }
 
-function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: AnyNode[] = []): void {
+// Tablica zapisana wprost, której wszystkie wpisy mają klucz literalny albo nie mają klucza wcale.
+function literalEntries(arr: AnyNode): boolean {
+  const items = Array.isArray(arr.items) ? (arr.items as unknown[]) : [];
+  return items.every((it) => {
+    const entry = asNode(it);
+    if (!entry || entry.unpack === true) return false;
+    const key = asNode(entry.key);
+    return !key || literalKey(key) !== undefined;
+  });
+}
+
+// Czy zmienna jest tablicą, którą w całym zakresie budują tylko zapisy z literalnymi kluczami: przypisanie
+// tablicy zapisanej wprost albo $tablica['klucz'] = .. i $tablica[] = .. . Parametr funkcji i każdy inny zapis
+// (wynik funkcji, żądanie, klucz ze zmiennej) wyklucza tę pewność.
+function literalKeyedVariable(root: AnyNode, name: string): boolean {
+  if (paramInfos(root).some((p) => p.name === name)) return false;
+  let writes = 0;
+  let ok = true;
+  const visit = (node: unknown): void => {
+    if (!ok) return;
+    if (Array.isArray(node)) {
+      for (const e of node as unknown[]) visit(e);
+      return;
+    }
+    const n = asNode(node);
+    if (!n) return;
+    if (n.kind === 'assign') {
+      const left = asNode(n.left);
+      const base = left ? baseVariable(left) : undefined;
+      if (left && base && base.kind === 'variable' && base.name === name) {
+        writes++;
+        if (left.kind === 'variable') {
+          const right = asNode(n.right);
+          if (!right || right.kind !== 'array' || !literalEntries(right)) ok = false;
+        } else if (left.kind === 'offsetlookup') {
+          let cur: AnyNode = left;
+          for (let inner = asNode(cur.what); inner && inner.kind === 'offsetlookup'; inner = asNode(cur.what)) cur = inner;
+          if (cur.offset && literalKey(cur.offset) === undefined) ok = false;
+        } else {
+          ok = false;
+        }
+      }
+    } else if (n.kind === 'foreach') {
+      for (const v of [asNode(n.key), asNode(n.value)]) if (v && v.kind === 'variable' && v.name === name) ok = false;
+    }
+    for (const k of Object.keys(n)) {
+      if (SKIP_KEYS.has(k)) continue;
+      const v = n[k];
+      if (v && typeof v === 'object') visit(v);
+    }
+  };
+  visit(root);
+  return ok && writes > 0;
+}
+
+// Czy klucze tablicy po której iteruje foreach wybiera autor kodu, a nie użytkownik.
+function keysAreLiteral(source: unknown, root: AnyNode): boolean {
+  const src = asNode(source);
+  if (!src) return false;
+  if (src.kind === 'array') return literalEntries(src);
+  if (src.kind === 'variable' && typeof src.name === 'string') return literalKeyedVariable(root, src.name);
+  return false;
+}
+
+function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: AnyNode[] = [], literalKeys = false, prefix = false): void {
   if (Array.isArray(node)) {
-    for (const e of node as unknown[]) collectEvents(e, root, out, anc);
+    for (const e of node as unknown[]) collectEvents(e, root, out, anc, literalKeys, prefix);
     return;
   }
   const n = asNode(node);
@@ -490,7 +660,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
   if (n !== root && SCOPE_KINDS.has(n.kind)) return; // zagnieżdżony zakres ma własny stan
 
   const guardHere = (): ReadonlySet<string> | undefined => {
-    const g = guardedNames(anc, startOffset(n));
+    const g = guardedNames(anc, startOffset(n), prefix);
     return g.size > 0 ? g : undefined;
   };
 
@@ -543,17 +713,23 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
     }
   } else if (n.kind === 'foreach') {
     const names: string[] = [];
-    for (const v of [asNode(n.key), asNode(n.value)]) {
+    const keyVar = asNode(n.key);
+    // Klucze tablicy z literalnymi kluczami wybiera autor kodu, więc zmienna klucza zostaje czysta.
+    const cleanKey = literalKeys && keyVar?.kind === 'variable' && keysAreLiteral(n.source, root);
+    for (const v of cleanKey ? [asNode(n.value)] : [keyVar, asNode(n.value)]) {
       if (v && v.kind === 'variable' && typeof v.name === 'string') names.push(v.name);
     }
     if (names.length) out.push({ off: endOffset(asNode(n.source)), names, expr: n.source, compound: false, guarded: guardHere() });
+    if (cleanKey && typeof keyVar?.name === 'string') {
+      out.push({ off: endOffset(asNode(n.source)), names: [keyVar.name], expr: undefined, compound: false, guarded: guardHere() });
+    }
   }
 
   anc.push(n);
   for (const k of Object.keys(n)) {
     if (SKIP_KEYS.has(k)) continue;
     const v = n[k];
-    if (v && typeof v === 'object') collectEvents(v, root, out, anc);
+    if (v && typeof v === 'object') collectEvents(v, root, out, anc, literalKeys, prefix);
   }
   anc.pop();
 }
@@ -615,11 +791,12 @@ export function untypedParams(scope: AnyNode): string[] {
 }
 
 // cleanKeys: elementy parametru znane jako czyste już w wywołaniu (na przykład klucz z literału).
-type Seeds = Array<{ name: string; source: TaintSource; cleanKeys?: string[] }>;
+// site: zakres, z którego wywołanie przekazało dane (dla źródła caller).
+type Seeds = Array<{ name: string; source: TaintSource; cleanKeys?: string[]; site?: AnyNode }>;
 
 function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped {
   const events: TaintEvent[] = [];
-  collectEvents(scope, scope, events);
+  collectEvents(scope, scope, events, [], spec.literalKeys === true, spec.prefixGuards === true);
   events.sort((a, b) => a.off - b.off);
 
   const requests = requestParams(scope);
@@ -721,11 +898,16 @@ export class TaintAnalyzer {
     private readonly spec: TaintSpec,
   ) {}
 
+  // Korzeń analizowanego pliku.
+  get root(): AnyNode {
+    return this.program;
+  }
+
   // Oznacza parametr funkcji jako źródło danych (na przykład $atts w callbacku shortcode).
   // Stan policzony wcześniej dla tego zakresu jest unieważniany i liczony od nowa.
-  seed(scope: AnyNode, name: string, source: TaintSource, cleanKeys?: string[]): void {
+  seed(scope: AnyNode, name: string, source: TaintSource, cleanKeys?: string[], site?: AnyNode): void {
     const list = this.seeds.get(scope) ?? [];
-    list.push({ name, source, cleanKeys });
+    list.push({ name, source, cleanKeys, site });
     this.seeds.set(scope, list);
     this.cache.delete(scope);
   }
@@ -733,6 +915,13 @@ export class TaintAnalyzer {
   // Czy parametr ma już przypisane źródło danych.
   hasSeed(scope: AnyNode, name: string): boolean {
     return (this.seeds.get(scope) ?? []).some((s) => s.name === name);
+  }
+
+  // Zakresy wywołań, które przekazały parametrowi dane użytkownika.
+  seedSites(scope: AnyNode, name: string): AnyNode[] {
+    const out: AnyNode[] = [];
+    for (const s of this.seeds.get(scope) ?? []) if (s.name === name && s.site) out.push(s.site);
+    return out;
   }
 
   private scopeOf(stack: PhpNode[]): AnyNode {
@@ -774,7 +963,7 @@ export class TaintAnalyzer {
     const s = scoped;
     // Przodkowie od zakresu w dół, bo sprawdzenie poza funkcją niczego w niej nie potwierdza.
     const from = stack.lastIndexOf(scope as PhpNode);
-    const guarded = guardedNames(from >= 0 ? stack.slice(from) : stack, off);
+    const guarded = guardedNames(from >= 0 ? stack.slice(from) : stack, off, this.spec.prefixGuards);
     const hit = evalTaint(
       expr,
       this.spec,

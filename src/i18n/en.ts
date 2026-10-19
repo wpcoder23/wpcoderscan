@@ -12,6 +12,11 @@ export const en = {
   'rule.wp.secret.hardcoded.title': 'Hardcoded secret in code',
   'rule.wp.xss.echo_superglobal.title': 'User input in echo or print without escaping',
   'rule.wp.auth.unprotected_action.title': 'Action handler without nonce or capability check',
+  'rule.wp.file.path_traversal.title': 'File read, write or delete with a path from user input',
+  'rule.wp.http.ssrf.title': 'HTTP request to an address from user input',
+  'rule.wp.upload.unrestricted.title': 'File upload without a file type check',
+  'rule.wp.privilege.escalation.title': 'Account role, login or capability controlled by the request',
+  'rule.wp.option.arbitrary_update.title': 'Option name controlled by user input',
 
   // Pochodzenie danych, wstawiane do komunikatów po słowie "data" lub "holds data".
   'origin.request': 'from a REST request',
@@ -74,6 +79,52 @@ export const en = {
   'rce.shell.message': '{name}() runs a command built from {from}. Risk of operating system command injection.',
   'rce.shell.fix':
     'Avoid the shell. If you must use it, pass arguments through escapeshellarg and do not concatenate them into the command string.',
+
+  // Reguły ujść: pliki, adresy HTTP, wysyłanie plików, role i opcje.
+  'from.direct': 'user input',
+  'from.viaVar': 'variable {var}, which holds data {origin}',
+  'file.read.message':
+    '{name}() reads a file from a path that comes from {from}. An attacker can read files such as wp-config.php.',
+  'file.write.message':
+    '{name}() writes a file to a path that comes from {from}. An attacker can overwrite files or plant PHP code.',
+  'file.delete.message':
+    '{name}() deletes a file at a path that comes from {from}. An attacker can delete files such as wp-config.php and take the site over.',
+  'file.fix':
+    'Do not build the path from input data. Map allowed names to fixed files, or reduce the input to a file name with wp_basename() and check that realpath() stays inside the expected folder.',
+  'ssrf.message':
+    '{name}() sends a request to an address that comes from {from}. An attacker can make the server call internal services or other hosts.',
+  'ssrf.fix':
+    'Do not take the address from input data. Use a fixed address, or check the host against an allowlist. wp_safe_remote_get() rejects internal addresses, and wp_http_validate_url() checks an address.',
+  'upload.move.message':
+    'move_uploaded_file() saves the file under a name that comes from {from}, and nothing in this function checks the file type. An attacker can upload a PHP script and run code.',
+  'upload.notype.message':
+    '{name}() runs with the file type check turned off (test_type is false). An attacker can upload a PHP script and run code.',
+  'upload.fix':
+    'Check the extension and type against an allowlist with wp_check_filetype_and_ext(), choose the file name yourself (wp_unique_filename()) and do not store uploads where the server runs PHP.',
+  'privilege.role.message':
+    'The account role is set to a value that comes from {from}. An attacker can give themselves the administrator role.',
+  'privilege.setrole.message':
+    '{name} sets a role to a value that comes from {from}. An attacker can give themselves the administrator role.',
+  'privilege.userdata.message':
+    '{name}() receives the whole request as account data, so the request can also set the role. An attacker can create an administrator account.',
+  'privilege.meta.message':
+    '{name}() writes user meta under a key that comes from {from}. An attacker can write the wp_capabilities key and become an administrator.',
+  'privilege.caps.message':
+    '{name}() writes the capabilities of an account with a value that comes from {from}. An attacker can grant themselves any permission.',
+  'privilege.login.message':
+    '{name}() signs in the account with an ID that comes from {from}. Nothing in this function proves who the visitor is. An attacker can sign in as any user, including an administrator.',
+  'privilege.role.fix':
+    'Do not take the role from the request. Set a fixed role (for example subscriber) and leave the choice of a role to users with the promote_users capability.',
+  'privilege.meta.fix':
+    'Use a fixed key or an allowlist of keys. Do not let the request choose a key that can be wp_capabilities or wp_user_level.',
+  'privilege.login.fix':
+    'Sign the account in only after you prove who the visitor is, for example with a password check, a one-time token compared with hash_equals(), or a signed link. Do not trust a user ID from the request.',
+  'option.update.message':
+    '{name}() changes an option whose name comes from {from}. An attacker can change settings such as default_role or users_can_register and take the site over.',
+  'option.delete.message':
+    '{name}() deletes an option whose name comes from {from}. An attacker can delete core options and break the site.',
+  'option.fix':
+    'Do not take the option name from input data. Use a fixed name, or check it against a list of your own options, and require a capability such as manage_options.',
 
   // Deserializacja.
   'unserialize.full': '{name}() on superglobal data. Risk of PHP object injection.',

@@ -7,7 +7,7 @@
 // wołane na dowolnym obiekcie ($obj->metoda) pomijamy, bo nie znamy jego klasy.
 import { walk } from '../parser';
 import { arrayItems, asNode, entryKeyName, offsetName, type AnyNode } from './ast-utils';
-import { collectDefinitions, enclosingClass, type Definitions } from './callbacks';
+import { collectDefinitions, enclosingClass, functionName, type Definitions } from './callbacks';
 import { paramInfos, type TaintAnalyzer } from './taint';
 import type { PhpNode } from './types';
 
@@ -24,8 +24,27 @@ const SOURCE_HINT =
 const MAX_PASSES = 6;
 const NOT_POSITIONAL = new Set(['namedargument', 'variadic']);
 
-const sitesByProgram = new WeakMap<AnyNode, CallSite[]>();
+// Wywołania rozpoznane w pliku oraz liczniki nazw. Liczniki mówią, czy każde wywołanie danej nazwy udało się
+// połączyć z definicją i czy nazwa nie pojawia się też jako tekst (callback zapisany jako 'nazwa').
+interface CallIndex {
+  sites: CallSite[];
+  calls: Map<string, number>; // wywołania wg nazwy funkcji albo metody, na dowolnym odbiorcy
+  mentions: Map<string, number>; // teksty równe nazwie: 'nazwa', array( $this, 'nazwa' ), 'Klasa::nazwa'
+}
+
+const indexByProgram = new WeakMap<AnyNode, CallIndex>();
 const localCalls = new WeakSet<AnyNode>();
+const NAME_TEXT = /^\\?[A-Za-z_][\w\\]*(?:::[A-Za-z_]\w*)?$/;
+
+const SCOPE_KINDS = new Set(['function', 'closure', 'method', 'arrowfunc']);
+
+// Funkcja albo metoda otaczająca wywołanie. Poza funkcją zakresem jest cały program.
+function scopeOf(stack: PhpNode[], program: PhpNode): AnyNode {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (SCOPE_KINDS.has(stack[i].kind)) return stack[i] as AnyNode;
+  }
+  return program as AnyNode;
+}
 
 // Nazwa bez przestrzeni nazw, małymi literami. Definicje w pliku są zapisane bez niej.
 function shortName(name: string): string {
@@ -55,29 +74,76 @@ function resolveCallee(call: AnyNode, stack: PhpNode[], defs: Definitions): AnyN
   return cls ? defs.methods.get(cls)?.get(method.toLowerCase()) : undefined;
 }
 
-function callSitesOf(program: PhpNode): CallSite[] {
-  const cached = sitesByProgram.get(program);
+// Nazwa wołanej funkcji albo metody małymi literami, bez względu na odbiorcę.
+function calledLabel(call: AnyNode): string | undefined {
+  const what = asNode(call.what);
+  if (!what) return undefined;
+  if (what.kind === 'name' && typeof what.name === 'string') return shortName(what.name);
+  if (what.kind !== 'propertylookup' && what.kind !== 'staticlookup') return undefined;
+  const offset = asNode(what.offset);
+  if (!offset || offset.kind !== 'identifier') return undefined;
+  return offsetName(offset)?.toLowerCase();
+}
+
+function bump(map: Map<string, number>, key: string): void {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+// Tekst jako indeks tablicy ($request['nazwa']) wskazuje element, a nie funkcję.
+function isIndexText(node: AnyNode, stack: PhpNode[]): boolean {
+  const parent = stack[stack.length - 1] as AnyNode | undefined;
+  return !!parent && parent.kind === 'offsetlookup' && parent.offset === node;
+}
+
+function indexOf(program: PhpNode): CallIndex {
+  const cached = indexByProgram.get(program);
   if (cached) return cached;
   const defs = collectDefinitions(program);
-  const out: CallSite[] = [];
-  if (defs.functions.size > 0 || defs.methods.size > 0) {
-    walk(program, (node, stack) => {
-      const n = node as AnyNode;
-      if (n.kind !== 'call') return;
-      const callee = resolveCallee(n, stack, defs);
-      if (!callee) return;
-      localCalls.add(n);
-      const args: AnyNode[] = [];
-      for (const a of Array.isArray(n.arguments) ? (n.arguments as unknown[]) : []) {
-        const arg = asNode(a);
-        if (!arg || NOT_POSITIONAL.has(arg.kind ?? '')) break;
-        args.push(arg);
+  const resolvable = defs.functions.size > 0 || defs.methods.size > 0;
+  const index: CallIndex = { sites: [], calls: new Map(), mentions: new Map() };
+  walk(program, (node, stack) => {
+    const n = node as AnyNode;
+    if (n.kind === 'string' && typeof n.value === 'string' && NAME_TEXT.test(n.value)) {
+      if (!isIndexText(n, stack)) {
+        bump(index.mentions, shortName(n.value.includes('::') ? n.value.slice(n.value.lastIndexOf('::') + 2) : n.value));
       }
-      if (args.length > 0) out.push({ callee, stack, args });
-    });
-  }
-  sitesByProgram.set(program, out);
-  return out;
+      return;
+    }
+    if (n.kind !== 'call') return;
+    const label = calledLabel(n);
+    if (label) bump(index.calls, label);
+    if (!resolvable) return;
+    const callee = resolveCallee(n, stack, defs);
+    if (!callee) return;
+    localCalls.add(n);
+    const args: AnyNode[] = [];
+    for (const a of Array.isArray(n.arguments) ? (n.arguments as unknown[]) : []) {
+      const arg = asNode(a);
+      if (!arg || NOT_POSITIONAL.has(arg.kind ?? '')) break;
+      args.push(arg);
+    }
+    index.sites.push({ callee, stack, args });
+  });
+  indexByProgram.set(program, index);
+  return index;
+}
+
+function callSitesOf(program: PhpNode): CallSite[] {
+  return indexOf(program).sites;
+}
+
+// Zakresy (funkcje, metody, domknięcia), z których plik woła daną funkcję albo metodę. Wynik jest pełny tylko
+// wtedy, gdy każde wywołanie tej nazwy w pliku zostało połączone z definicją i nazwa nie występuje jako tekst
+// (callback hooka, array( $this, 'nazwa' )). Inaczej funkcja ma wejście, którego nie widzimy, i wynik to undefined.
+// Wywołania z innych plików są poza zasięgiem, jak w całej analizie.
+export function callerScopes(program: PhpNode, fn: AnyNode): AnyNode[] | undefined {
+  const name = functionName(fn)?.toLowerCase();
+  if (!name) return undefined;
+  const index = indexOf(program);
+  if ((index.mentions.get(name) ?? 0) > 0) return undefined;
+  const scopes = index.sites.filter((site) => site.callee === fn).map((site) => scopeOf(site.stack, program));
+  if (scopes.length === 0 || scopes.length !== (index.calls.get(name) ?? 0)) return undefined;
+  return scopes;
 }
 
 // Czy wywołanie prowadzi do funkcji albo metody zdefiniowanej w tym samym pliku. Takie ujście
@@ -123,7 +189,7 @@ export function linkCallers(taint: TaintAnalyzer, program: PhpNode, code: string
         if (param.scalar || taint.hasSeed(site.callee, param.name)) continue;
         const hit = taint.analyze(site.args[i], site.stack);
         if ((!hit.direct && !hit.viaVar) || hit.source === 'param') continue;
-        taint.seed(site.callee, param.name, hit.source ?? 'caller', cleanKeys(taint, site.args[i], site.stack));
+        taint.seed(site.callee, param.name, hit.source ?? 'caller', cleanKeys(taint, site.args[i], site.stack), scopeOf(site.stack, program));
         changed = true;
       }
     }

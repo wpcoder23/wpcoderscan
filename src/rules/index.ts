@@ -9,10 +9,15 @@ import { secretsRule } from './secrets';
 import { xssEchoRule } from './xss';
 import { nonceCapabilityRule } from './nonce-capability';
 import { sqliParamRule } from './sqli-param';
+import { filePathRule } from './file-path';
+import { ssrfRule } from './ssrf';
+import { uploadRule } from './upload';
+import { privilegeRule } from './privilege';
+import { optionUpdateRule } from './option-update';
 
 // Reguły rozszerzone. Mają większą czułość i więcej fałszywych alarmów, więc
 // działają tylko z opcją extended (--extended w CLI).
-export const extendedRules: Rule[] = [sqliParamRule];
+export const extendedRules: Rule[] = [sqliParamRule, filePathRule, ssrfRule, uploadRule, privilegeRule, optionUpdateRule];
 
 export const allRules: Rule[] = [
   sqliRule,
