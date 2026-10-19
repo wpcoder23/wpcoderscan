@@ -100,3 +100,40 @@ function ping() {
     expect(f).toHaveLength(1);
   });
 });
+
+describe('pochodzenie "parametr funkcji"', () => {
+  const PARAM = 'wp.sqli.param_unprepared';
+
+  it('array_column z parametru nie daje podejrzenia o parametr', async () => {
+    const f = await run(`<?php
+function remove( $rows ) {
+	global $wpdb;
+	$ids = implode( ',', array_column( $rows, 'id' ) );
+	$wpdb->query( "DELETE FROM {$wpdb->posts} WHERE ID IN ($ids)" );
+}`, PARAM, true);
+    expect(f).toHaveLength(0);
+  });
+
+  it('array_merge z parametru nadal daje podejrzenie o parametr', async () => {
+    const f = await run(`<?php
+function remove( $rows ) {
+	global $wpdb;
+	$ids = implode( ',', array_merge( $rows, array( 1 ) ) );
+	$wpdb->query( "DELETE FROM {$wpdb->posts} WHERE ID IN ($ids)" );
+}`, PARAM, true);
+    expect(f).toHaveLength(1);
+  });
+
+  it('array_column z parametru, który wywołujący wypełnia danymi z żądania, trafia do zapytania', async () => {
+    const f = await run(`<?php
+function remove( $rows ) {
+	global $wpdb;
+	$ids = implode( ',', array_column( $rows, 'id' ) );
+	$wpdb->query( "DELETE FROM {$wpdb->posts} WHERE ID IN ($ids)" );
+}
+function handler() {
+	remove( $_POST['rows'] );
+}`, SQLI);
+    expect(f).toHaveLength(1);
+  });
+});

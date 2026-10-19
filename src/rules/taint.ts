@@ -205,14 +205,20 @@ const PASSTHROUGH = new Set([
   'esc_html', 'esc_attr', 'esc_url', 'esc_url_raw', 'esc_js', 'esc_textarea',
   'wp_kses', 'wp_kses_post', 'wp_kses_data', 'htmlspecialchars', 'htmlentities',
   'wp_json_encode', 'addslashes',
-  // Przekształcenia tekstu i tablic, które zwracają fragment albo kopię argumentu.
+]);
+
+// Funkcje, które zwracają fragment albo kopię argumentu: przekształcenia tekstu i tablic oraz ścieżki sklejane
+// z argumentu bez żadnej ucieczki. Niosą dalej dane z żądania, ale nie niosą słabego pochodzenia "parametr
+// funkcji", z którego korzysta tylko opcjonalna reguła wp.sqli.param_unprepared. Bez tego rozszerzenie listy
+// dokładałoby do niej szum (zapytania z prepare, do których wchodzą identyfikatory z array_column) bez zysku.
+// parse_url zostaje poza listą celowo: w pomiarze dał dwa wątpliwe znaleziska na popularnych wtyczkach i żadnej pary.
+const REQUEST_PASSTHROUGH = new Set([
   'strval', 'str_pad', 'strrev', 'wordwrap', 'addcslashes', 'quotemeta', 'chunk_split', 'strtr', 'strstr', 'stristr',
   'strrchr', 'strtok', 'str_split', 'mb_str_split', 'preg_split', 'preg_replace_callback', 'preg_filter', 'preg_quote',
   'utf8_decode', 'utf8_encode', 'mb_convert_encoding', 'mb_convert_case', 'mb_strimwidth', 'iconv',
   'array_pop', 'array_shift', 'array_diff', 'array_flip', 'array_merge_recursive', 'array_replace', 'array_pad',
   'array_chunk', 'array_column', 'array_fill_keys', 'array_splice', 'current', 'reset', 'end', 'next', 'prev',
-  'wp_parse_args', 'wp_slash', 'parse_url',
-  // Ścieżki sklejane z argumentu bez żadnej ucieczki.
+  'wp_parse_args', 'wp_slash',
   'dirname', 'wp_normalize_path', 'trailingslashit', 'untrailingslashit',
 ]);
 
@@ -508,7 +514,16 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
           const fn = literalString(args[1]);
           if (fn !== undefined && spec.clean.has(fn.toLowerCase())) return NONE;
         }
-        return PASSTHROUGH.has(name) || spec.extraPassthrough?.has(name) ? evalTaint(args, spec, env) : NONE;
+        if (PASSTHROUGH.has(name) || spec.extraPassthrough?.has(name)) return evalTaint(args, spec, env);
+        if (REQUEST_PASSTHROUGH.has(name)) {
+          let acc = NONE;
+          for (const a of args) {
+            const hit = evalTaint(a, spec, env);
+            if (hit.source !== 'param') acc = merge(acc, hit);
+          }
+          return acc;
+        }
+        return NONE;
       }
       // Wywołanie metody. Interesuje nas tylko $wpdb->prepare i pokrewne.
       const callee = asNode(n.what);
