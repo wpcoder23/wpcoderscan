@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0
+
+Better recall on known vulnerabilities, with the same noise on popular plugins.
+
+On 475 pairs of a CVE and a vulnerable plugin version (2023 to 2025), the default mode now reports a finding of the right class within 25 lines of the CVE line in 144 cases (30.3%), up from 117 (24.6%). With `--extended` it is 162 (34.1%), up from 139 (29.3%). On the 200 most popular plugins the total is unchanged at 580 findings, the median is still 1 per plugin, and 97 plugins have no finding. There is no false-positive rate. See `benchmark/README.md` for the method and its limits.
+
+- Data flow follows calls between functions of the same file, up to six levels deep. It covers functions and `$this->method()`, `self::`, `static::` and `ClassName::` calls. A parameter that a caller fills with user input counts as user input inside the function. Array arguments with literal keys are followed element by element. Calls into other files are still not followed.
+- A function that passes its first parameter to `shortcode_atts` counts as a shortcode handler, also when `add_shortcode` is in another file. A shortcode function that returns an array is not treated as output.
+- `wp.sqli.unprepared`: `$wpdb->prepare` protects only the values passed as arguments. User input pasted into the query text it receives is now reported (`ORDER BY $orderby`, a column or table name).
+- `wp.sqli.unprepared`: `esc_sql`, `addslashes` and `$wpdb->_escape` protect only text inside quotes. A value escaped this way but used outside quotes (a number, a column, `ORDER BY`, `LIMIT`, text between backticks) is reported with high severity. Before, any use of `esc_sql` counted as safe.
+- `wp.unserialize.user_input` follows variables and reports them as a heuristic. A call inside `if ( is_serialized_string( $x ) )` is skipped.
+- `wp.rce.dynamic` reports template loaders that receive user input: `get_template_part`, `locate_template`, `load_template`, `wc_get_template`, `wc_get_template_part`, `wc_get_template_html`, and methods such as `get_template` or `render_template` (CWE-98). A data array passed to the loader is not a template name and is ignored. A loader defined in the same file is followed instead of being reported at the call.
+- `wp.sqli.param_unprepared` (`--extended`): when a call in the same file passes user input to the parameter, the regular `wp.sqli.unprepared` rule reports it and this rule stays quiet.
+- More allowlist guards: `array_filter( $list, 'is_numeric' )`, a regular expression that rejects any character outside a set (`/[^a-z0-9_]/i`, `/\W/`), calls to validators named like `is_valid_*`, `is_allowed_*` and `validate_*`, and array elements with several literal keys (`$_POST['order'][0]['dir']`). A check also counts inside a ternary and on a single array element. Validators for e-mail, URL, date and tokens do not count, because they do not limit a value to a safe set.
+- `wc_clean` clears XSS findings like `sanitize_text_field`, and does not clear SQL, path or command findings.
+- `wp.auth.unprotected_action` reports at the handler definition, not at the `add_action` line, because that is where the check has to be added. Three authorization pairs of the benchmark (CVE-2025-5304, CVE-2025-13403, CVE-2025-14366) are no longer within 25 lines of their CVE line because of this.
+- The `benchmark/` folder holds the scripts and data that produce the recall and noise numbers, so anyone can repeat them.
+
 ## 0.4.0
 
 English by default.

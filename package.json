@@ -1,6 +1,6 @@
 {
   "name": "wpcoderscan",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Security scanner for WordPress and PHP code. Finds vulnerabilities in plugins and themes before they ship. Taint analysis, SARIF, GitHub Action.",
   "type": "module",
   "license": "Apache-2.0",
