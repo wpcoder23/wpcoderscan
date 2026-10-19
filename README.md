@@ -4,7 +4,7 @@
 
 Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję. Narzędzie dla deweloperów, vendorów i agencji, na czasy kodu generowanego przez AI.
 
-Status: wczesny etap (v0.3.2). Architektura wzorowana na skanerze AgentShield (MIT), kod w całości własny, z warstwą reguł PHP i WordPress. Szczegóły atrybucji w pliku `NOTICE`.
+To wczesny etap (v0.3.2). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
