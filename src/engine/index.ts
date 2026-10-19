@@ -2,6 +2,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { collectPhpFiles, type CollectOptions } from '../collector';
+import { createTranslator, DEFAULT_LANG, type Lang } from '../i18n';
 import { allRules, extendedRules } from '../rules';
 import type { Finding, Rule } from '../rules/types';
 import { analyzeSource, type ScanError } from './analyze';
@@ -13,11 +14,13 @@ export interface ScanOptions extends CollectOptions {
   extended?: boolean; // dołącz reguły rozszerzone (większa czułość, więcej fałszywych alarmów)
   cwd?: string; // do liczenia ścieżek względnych
   files?: string[]; // jawna lista plików do skanu, pomija kolektor (tryb diff)
+  lang?: Lang; // język komunikatów wyniku, domyślnie angielski
 }
 
 export type { ScanError };
 
 export interface ScanResult {
+  lang: Lang; // język komunikatów w tym wyniku
   target: string;
   filesScanned: number;
   findings: Finding[];
@@ -35,6 +38,8 @@ const SEVERITY_ORDER: Record<string, number> = {
 
 export async function scan(target: string, opts: ScanOptions = {}): Promise<ScanResult> {
   const cwd = opts.cwd ?? process.cwd();
+  const lang = opts.lang ?? DEFAULT_LANG;
+  const t = createTranslator(lang);
   const rules = opts.rules ?? (opts.extended ? [...allRules, ...extendedRules] : allRules);
   // W trybie diff dostajemy gotową listę plików. Inaczej zbiera ją kolektor.
   const files = opts.files ?? (await collectPhpFiles(target, opts));
@@ -50,14 +55,14 @@ export async function scan(target: string, opts: ScanOptions = {}): Promise<Scan
     try {
       code = await fs.readFile(abs, 'utf8');
     } catch (e) {
-      errors.push({ file: rel, message: `nie udało się odczytać pliku: ${(e as Error).message}` });
+      errors.push({ file: rel, message: t('error.read', { detail: (e as Error).message }) });
       continue;
     }
 
-    const analysis = analyzeSource(rel, abs, code, rules);
+    const analysis = analyzeSource(rel, abs, code, rules, lang);
     errors.push(...analysis.errors);
     // Podpowiedzi napraw przechodzą bramki: parse, ponowny skan, brak konfliktów.
-    resolvePatches({ rel, abs, code, before: analysis.findings, rules });
+    resolvePatches({ rel, abs, code, before: analysis.findings, rules, lang });
     findings.push(...analysis.findings);
   }
 
@@ -70,5 +75,5 @@ export async function scan(target: string, opts: ScanOptions = {}): Promise<Scan
   );
 
   const score = scoreFindings(findings);
-  return { target, filesScanned: files.length, findings, score, errors };
+  return { lang, target, filesScanned: files.length, findings, score, errors };
 }

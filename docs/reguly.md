@@ -1,6 +1,6 @@
 # Reguły WPCoderScan
 
-Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wygląda kod poprawny i jaką pewność ma wykrycie.
+Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wygląda kod poprawny i jaką pewność ma wykrycie. Wersja angielska: [rules.md](rules.md).
 
 **Pewność.** Znalezisko *pewne* (firm) jest strukturalnie jednoznaczne i domyślnie łamie build. Znalezisko *heurystyczne* może być fałszywym alarmem, więc tylko ostrzega. Flaga `--strict` liczy też heurystyki do kodu wyjścia.
 

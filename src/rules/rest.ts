@@ -76,7 +76,7 @@ function isReturnTrue(value: unknown): boolean {
 
 export const restPermissionRule: Rule = {
   id: 'wp.rest.no_permission_callback',
-  title: 'Trasa REST API bez kontroli dostępu',
+  titleKey: 'rule.wp.rest.no_permission_callback.title',
   severity: 'high',
   confidence: 'firm',
   cwe: ['CWE-862'],
@@ -107,18 +107,16 @@ export const restPermissionRule: Rule = {
             ...base,
             severity: 'high',
             confidence: 'firm',
-            message:
-              'register_rest_route bez permission_callback. Endpoint REST jest dostępny bez kontroli uprawnień.',
-            fix: 'Dodaj permission_callback i sprawdź uprawnienia, np. current_user_can albo weryfikację nonce. Dla endpointu celowo publicznego ustaw to świadomie.',
+            message: ctx.t('rest.missing.message'),
+            fix: ctx.t('rest.missing.fix'),
           });
         } else if (isReturnTrue(permission.value) && !isReadOnly(cfg)) {
           findings.push({
             ...base,
             severity: 'medium',
             confidence: 'heuristic',
-            message:
-              'permission_callback ustawiony na __return_true na trasie zmieniającej dane. Endpoint REST jest otwarty dla każdego.',
-            fix: 'Jeśli endpoint ma być publiczny, zostaw to świadomie. W innym wypadku sprawdź uprawnienia przez current_user_can albo weryfikację nonce.',
+            message: ctx.t('rest.openWrite.message'),
+            fix: ctx.t('rest.openWrite.fix'),
           });
         }
       }

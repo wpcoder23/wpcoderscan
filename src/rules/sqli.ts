@@ -8,7 +8,7 @@
 // wtyczkach to prawie zawsze fałszywy alarm.
 import { walk } from '../parser';
 import { asNode, nodeStart, offsetName, type AnyNode } from './ast-utils';
-import { originText, SQL_SPEC, TaintAnalyzer } from './taint';
+import { originText, SQL_SPEC, TaintAnalyzer, viaText } from './taint';
 import type { Finding, FileContext, Rule } from './types';
 
 export const SINKS = new Set(['query', 'get_results', 'get_row', 'get_col', 'get_var']);
@@ -30,7 +30,7 @@ export function wpdbMethodCall(node: unknown): string | undefined {
 
 export const sqliRule: Rule = {
   id: 'wp.sqli.unprepared',
-  title: 'Zapytanie do bazy bez $wpdb->prepare z danymi od użytkownika',
+  titleKey: 'rule.wp.sqli.unprepared.title',
   severity: 'high',
   confidence: 'firm',
   cwe: ['CWE-89'],
@@ -59,21 +59,21 @@ export const sqliRule: Rule = {
         column: loc?.column ?? 0,
         cwe: sqliRule.cwe,
         asvs: sqliRule.asvs,
-        fix: 'Użyj $wpdb->prepare() z placeholderami %s, %d, %f i przekaż dane jako argumenty, zamiast sklejać je w tekst zapytania.',
+        fix: ctx.t('sqli.fix'),
       };
       if (hit.direct) {
         findings.push({
           ...base,
           severity: 'critical',
           confidence: 'firm',
-          message: `Wywołanie $wpdb->${method}() wkleja dane od użytkownika do zapytania bez prepare. Grozi SQL injection.`,
+          message: ctx.t('sqli.direct', { method }),
         });
       } else {
         findings.push({
           ...base,
           severity: 'high',
           confidence: 'heuristic',
-          message: `Wywołanie $wpdb->${method}() używa zmiennej $${hit.via ?? ''}, która zawiera dane ${originText(hit)}, i buduje z niej zapytanie bez prepare. Prawdopodobny SQL injection.`,
+          message: ctx.t('sqli.viaVar', { method, var: viaText(hit), origin: originText(hit, ctx.t) }),
         });
       }
     });

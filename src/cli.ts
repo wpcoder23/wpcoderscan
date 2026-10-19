@@ -6,76 +6,12 @@ import { renderSarif } from './report/sarif';
 import { buildPatchFile } from './fix/suggest';
 import { writeFileSync } from 'node:fs';
 import { gitChangedPhpFiles } from './collector/git';
-import type { Severity } from './rules/types';
+import { parseArgs, parseFailOn, resolveLanguage, SEVERITY_ORDER } from './cli-options';
+import { createTranslator, DEFAULT_LANG } from './i18n';
 import { VERSION } from './version';
 
-const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
-
-interface Args {
-  target: string;
-  json: boolean;
-  sarif: boolean;
-  failOn: Severity | 'none';
-  strict: boolean;
-  diff: string | null;
-  suggest: boolean;
-  extended: boolean;
-  patch: string | null;
-  help: boolean;
-  version: boolean;
-}
-
-function parseArgs(argv: string[]): Args {
-  const args: Args = {
-    target: '',
-    json: false,
-    sarif: false,
-    failOn: 'high',
-    strict: false,
-    diff: null,
-    suggest: false,
-    extended: false,
-    patch: null,
-    help: false,
-    version: false,
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--json') args.json = true;
-    else if (a === '--sarif') args.sarif = true;
-    else if (a === '--strict') args.strict = true;
-    else if (a === '--suggest') args.suggest = true;
-    else if (a === '--extended') args.extended = true;
-    else if (a === '--patch') args.patch = argv[++i] ?? null;
-    else if (a === '--help' || a === '-h') args.help = true;
-    else if (a === '--version' || a === '-v') args.version = true;
-    else if (a === '--fail-on') args.failOn = (argv[++i] as Severity) ?? 'high';
-    else if (a === '--diff') args.diff = argv[++i] ?? 'HEAD';
-    else if (!a.startsWith('-') && !args.target) args.target = a;
-  }
-  return args;
-}
-
-const HELP = `WPCoderScan - skaner bezpieczeństwa kodu WordPress i PHP
-
-Użycie:
-  wpcoderscan <ścieżka> [opcje]
-
-Opcje:
-  --json              wypisz wynik jako JSON
-  --sarif             wypisz wynik jako SARIF 2.1.0 (do zakładki Security GitHuba)
-  --fail-on <poziom>  kod wyjścia 1, gdy jest znalezisko tego poziomu lub cięższe
-                      (critical, high, medium, low, none; domyślnie high)
-  --strict            licz też znaleziska heurystyczne do kodu wyjścia
-                      (domyślnie build łamią tylko znaleziska pewne)
-  --diff <ref>        skanuj tylko pliki PHP zmienione wobec ref gita
-                      (domyślnie HEAD; szybki skan dla pull requestów)
-  --extended          dołącz reguły rozszerzone (większa czułość, więcej fałszywych alarmów)
-  --suggest           pokaż podpowiedzi napraw przy znaleziskach (nic nie zapisuje)
-  --patch <plik>      zapisz pełne podpowiedzi napraw jako łatkę do git apply
-  -v, --version       pokaż wersję
-  -h, --help          ta pomoc
-`;
+// Tłumacz dla błędów zgłaszanych na końcu. Po wyborze języka zostaje podmieniony.
+let t = createTranslator(DEFAULT_LANG);
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -83,19 +19,26 @@ async function main(): Promise<void> {
     process.stdout.write(`${VERSION}\n`);
     process.exit(0);
   }
+
+  const resolved = resolveLanguage(args.lang, process.env.WPCODERSCAN_LANG);
+  if (resolved.warning) process.stderr.write(`${resolved.warning}\n`);
+  const lang = resolved.lang;
+  t = createTranslator(lang);
+
   if (args.help || (!args.target && args.diff === null)) {
-    process.stdout.write(HELP);
+    process.stdout.write(t('cli.help'));
     process.exit(args.help ? 0 : 1);
   }
+  const failOn = parseFailOn(args.failOn, t);
 
   const cwd = process.cwd();
   let result: ScanResult;
   if (args.diff !== null) {
     // Tryb diff: skanujemy tylko pliki PHP zmienione wobec ref gita.
-    const files = gitChangedPhpFiles(args.diff, cwd);
-    result = await scan(`diff:${args.diff}`, { cwd, files, extended: args.extended });
+    const files = gitChangedPhpFiles(args.diff, cwd, t);
+    result = await scan(`diff:${args.diff}`, { cwd, files, extended: args.extended, lang });
   } else {
-    result = await scan(args.target, { cwd, extended: args.extended });
+    result = await scan(args.target, { cwd, extended: args.extended, lang });
   }
 
   if (args.sarif) {
@@ -109,21 +52,21 @@ async function main(): Promise<void> {
   if (args.patch !== null) {
     const built = buildPatchFile(result, cwd);
     if (built.patches === 0) {
-      process.stderr.write('Brak pełnych podpowiedzi napraw, łatka nie powstała.\n');
+      process.stderr.write(`${t('cli.patch.none')}\n`);
     } else {
       writeFileSync(args.patch, built.diff, 'utf8');
       process.stderr.write(
-        `Zapisano łatkę ${args.patch}: poprawek ${built.patches}, plików ${built.files}.\n` +
-          `Sprawdź ją i zastosuj: git apply --check ${args.patch} && git apply ${args.patch}\n`,
+        `${t('cli.patch.saved', { file: args.patch, patches: built.patches, files: built.files })}\n` +
+          `${t('cli.patch.apply', { file: args.patch })}\n`,
       );
     }
     if (built.manual > 0) {
-      process.stderr.write(`Pominięto ${built.manual} podpowiedzi do decyzji. Zobacz je opcją --suggest.\n`);
+      process.stderr.write(`${t('cli.patch.manual', { count: built.manual })}\n`);
     }
   }
 
-  if (args.failOn !== 'none') {
-    const threshold = SEVERITY_ORDER.indexOf(args.failOn);
+  if (failOn !== 'none') {
+    const threshold = SEVERITY_ORDER.indexOf(failOn);
     const fail = result.findings.some(
       (f) =>
         SEVERITY_ORDER.indexOf(f.severity) <= threshold &&
@@ -135,6 +78,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e: unknown) => {
-  process.stderr.write(`błąd: ${(e as Error).message}\n`);
+  process.stderr.write(`${t('cli.error', { message: (e as Error).message })}\n`);
   process.exit(2);
 });

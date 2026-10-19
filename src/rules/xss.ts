@@ -7,12 +7,24 @@ import { buildXssPatch } from '../fix/xss-patch';
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
 import { collectDefinitions, resolveCallbackNode } from './callbacks';
-import { originText, TaintAnalyzer, XSS_SPEC } from './taint';
+import { originText, TaintAnalyzer, viaText, XSS_SPEC } from './taint';
+import type { MessageKey } from '../i18n';
 import type { Finding, FileContext, Patch, PhpNode, Rule, Severity } from './types';
+
+// Ujścia XSS rozpoznawane w kodzie. Nazwę do komunikatu bierzemy z katalogu tłumaczeń.
+type Sink = 'echo' | 'exit' | 'shortcode' | 'printf' | 'wp_die';
+
+const SINK_KEY: Record<Sink, MessageKey> = {
+  echo: 'xss.sink.echo',
+  exit: 'xss.sink.exit',
+  shortcode: 'xss.sink.shortcode',
+  printf: 'xss.sink.printf',
+  wp_die: 'xss.sink.wp_die',
+};
 
 export const xssEchoRule: Rule = {
   id: 'wp.xss.echo_superglobal',
-  title: 'Dane użytkownika w echo lub print bez ucieczki',
+  titleKey: 'rule.wp.xss.echo_superglobal.title',
   severity: 'high',
   confidence: 'heuristic',
   cwe: ['CWE-79'],
@@ -22,7 +34,7 @@ export const xssEchoRule: Rule = {
     const taint = new TaintAnalyzer(ctx.ast, XSS_SPEC);
 
     // Atrybuty shortcode zapisuje autor wpisu, więc skutkiem jest zapisany XSS.
-    const xssKind = (hit: { source?: string }) => (hit.source === 'shortcode' ? 'zapisanym XSS' : 'odbitym XSS');
+    const isStored = (hit: { source?: string }) => hit.source === 'shortcode';
 
     // Callbacki add_shortcode z tego pliku: pierwszy parametr ($atts) to dane od autora wpisu.
     const shortcodeScopes = new Set<AnyNode>();
@@ -55,16 +67,16 @@ export const xssEchoRule: Rule = {
         column: loc?.column ?? 0,
         cwe: xssEchoRule.cwe,
         asvs: xssEchoRule.asvs,
-        fix: 'Opakuj dane funkcją ucieczki zależną od kontekstu: esc_html w treści, esc_attr w atrybucie, esc_url w adresie. Dla HTML z tagami użyj wp_kses_post.',
+        fix: ctx.t('xss.fix'),
         ...(patch ? { patch } : {}),
       });
     };
 
-    // sink to nazwa ujścia w komunikacie. Podpowiedź naprawy budujemy tylko dla echo i print.
-    const check = (expr: unknown, stmt: AnyNode, exprIndex: number, stack: PhpNode[], sink = 'echo lub print') => {
+    // sink to ujście, którego nazwa trafia do komunikatu. Podpowiedź naprawy budujemy tylko dla echo i print.
+    const check = (expr: unknown, stmt: AnyNode, exprIndex: number, stack: PhpNode[], sink: Sink = 'echo') => {
       // Odpowiedzi JSON w die, wp_die i printf to zwykle AJAX, nie HTML.
       const call = asNode(expr);
-      if (sink !== 'echo lub print' && call && ['json_encode', 'wp_json_encode'].includes(calledName(call) ?? '')) return;
+      if (sink !== 'echo' && call && ['json_encode', 'wp_json_encode'].includes(calledName(call) ?? '')) return;
       const hit = taint.analyze(expr, stack);
       const at = asNode(expr) ?? stmt;
       const exprNode = asNode(expr);
@@ -75,14 +87,23 @@ export const xssEchoRule: Rule = {
         report(
           at,
           hit.source ? 'medium' : 'high',
-          `Dane ${originText(hit)} trafiają do ${sink} bez funkcji ucieczki. Grozi ${xssKind(hit)}.`,
+          ctx.t('xss.direct', {
+            origin: originText(hit, ctx.t),
+            sink: ctx.t(SINK_KEY[sink]),
+            kind: ctx.t(isStored(hit) ? 'xss.risk.stored' : 'xss.risk.reflected'),
+          }),
           patch,
         );
       } else if (hit.viaVar) {
         report(
           at,
           'medium',
-          `Zmienna $${hit.via ?? ''} zawiera dane ${originText(hit)} i trafia do ${sink} bez funkcji ucieczki. Możliwy ${xssKind(hit) === 'zapisanym XSS' ? 'zapisany' : 'odbity'} XSS.`,
+          ctx.t('xss.viaVar', {
+            var: viaText(hit),
+            origin: originText(hit, ctx.t),
+            sink: ctx.t(SINK_KEY[sink]),
+            kind: ctx.t(isStored(hit) ? 'xss.possible.stored' : 'xss.possible.reflected'),
+          }),
           patch,
         );
       }
@@ -98,7 +119,7 @@ export const xssEchoRule: Rule = {
       } else if (n.kind === 'exit') {
         // die( $tekst ) wypisuje tekst bez ucieczki.
         const e = asNode(n.expression);
-        if (e && e.kind !== 'number') check(e, n, 0, stack, 'die lub exit');
+        if (e && e.kind !== 'number') check(e, n, 0, stack, 'exit');
       } else if (n.kind === 'return' && shortcodeScopes.size > 0) {
         // Wynik shortcode trafia do treści strony jako HTML bez ucieczki.
         let scope: PhpNode | undefined;
@@ -106,7 +127,7 @@ export const xssEchoRule: Rule = {
           if (['function', 'closure', 'method', 'arrowfunc'].includes(stack[i].kind)) scope = stack[i];
         }
         if (scope && shortcodeScopes.has(scope as AnyNode) && n.expr) {
-          check(n.expr, n, 0, stack, 'zwracanego HTML shortcode');
+          check(n.expr, n, 0, stack, 'shortcode');
         }
       } else if (n.kind === 'call') {
         const fn = calledName(n);

@@ -7,7 +7,7 @@ import type { Finding, FileContext, Rule } from './types';
 
 export const registerSettingRule: Rule = {
   id: 'wp.option.no_sanitize_callback',
-  title: 'register_setting bez sanitize_callback',
+  titleKey: 'rule.wp.option.no_sanitize_callback.title',
   severity: 'medium',
   confidence: 'firm',
   cwe: ['CWE-20'],
@@ -36,14 +36,13 @@ export const registerSettingRule: Rule = {
         ruleId: registerSettingRule.id,
         severity: 'medium',
         confidence: 'firm',
-        message:
-          'register_setting bez sanitize_callback. Wartość opcji jest zapisywana bez walidacji.',
+        message: ctx.t('registerSetting.message'),
         file: ctx.file,
         line: loc?.line ?? 1,
         column: loc?.column ?? 0,
         cwe: registerSettingRule.cwe,
         asvs: registerSettingRule.asvs,
-        fix: 'Dodaj sanitize_callback w tablicy argumentów register_setting, np. sanitize_text_field albo własną walidację pod typ opcji.',
+        fix: ctx.t('registerSetting.fix'),
       });
     });
     return findings;

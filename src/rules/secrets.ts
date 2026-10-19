@@ -5,36 +5,37 @@
 // alarmem, więc tylko ostrzega.
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, offsetName, type AnyNode } from './ast-utils';
+import type { MessageKey } from '../i18n';
 import type { Finding, FileContext, Rule, Severity } from './types';
 
 interface ProviderPattern {
   re: RegExp;
   severity: Severity;
-  label: string;
+  labelKey: MessageKey;
   // Domyślnie pewne. Heurystyka tylko ostrzega i nie łamie build.
   confidence?: 'firm' | 'heuristic';
-  note?: string;
+  noteKey?: MessageKey;
 }
 
 // Wzorce znanych dostawców. Dobrane tak, żeby trafiać w realne klucze,
 // a nie w zwykły tekst.
 const PROVIDER_PATTERNS: ProviderPattern[] = [
-  { re: /\bAKIA[0-9A-Z]{16}\b/, severity: 'critical', label: 'klucz dostępu AWS' },
-  { re: /\b(?:sk|rk)_live_[0-9a-zA-Z]{24,}\b/, severity: 'critical', label: 'klucz Stripe (live)' },
-  { re: /\bgh[pousr]_[0-9A-Za-z]{36,}\b/, severity: 'critical', label: 'token GitHub' },
+  { re: /\bAKIA[0-9A-Z]{16}\b/, severity: 'critical', labelKey: 'secret.label.aws' },
+  { re: /\b(?:sk|rk)_live_[0-9a-zA-Z]{24,}\b/, severity: 'critical', labelKey: 'secret.label.stripe' },
+  { re: /\bgh[pousr]_[0-9A-Za-z]{36,}\b/, severity: 'critical', labelKey: 'secret.label.github' },
   // Klucze Google do map w przeglądarce bywają publiczne z założenia, a ten sam format
   // mają klucze płatnych API. Nie da się tego rozstrzygnąć z kodu, więc tylko ostrzegamy.
   {
     re: /\bAIza[0-9A-Za-z_-]{35}\b/,
     severity: 'high',
-    label: 'klucz API Google',
+    labelKey: 'secret.label.google',
     confidence: 'heuristic',
-    note: ' Klucz do map w przeglądarce bywa publiczny z założenia, ale ten sam format mają klucze płatnych API. Sprawdź w konsoli Google, czy klucz ma ograniczenia.',
+    noteKey: 'secret.note.google',
   },
-  { re: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/, severity: 'high', label: 'token Slack' },
+  { re: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/, severity: 'high', labelKey: 'secret.label.slack' },
   // Sam nagłówek PEM to zwykle tekst parsera. Klucz to nagłówek i treść base64.
-  { re: /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----\s*[A-Za-z0-9+/=\s]{40,}/, severity: 'critical', label: 'klucz prywatny' },
-  { re: /\bSG\.[\w-]{16,}\.[\w-]{16,}\b/, severity: 'high', label: 'klucz API SendGrid' },
+  { re: /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----\s*[A-Za-z0-9+/=\s]{40,}/, severity: 'critical', labelKey: 'secret.label.privateKey' },
+  { re: /\bSG\.[\w-]{16,}\.[\w-]{16,}\b/, severity: 'high', labelKey: 'secret.label.sendgrid' },
 ];
 
 // Nazwy sugerujące sekret.
@@ -67,7 +68,7 @@ function assignTargetName(left: unknown): string | undefined {
 
 export const secretsRule: Rule = {
   id: 'wp.secret.hardcoded',
-  title: 'Zaszyty sekret w kodzie',
+  titleKey: 'rule.wp.secret.hardcoded.title',
   severity: 'high',
   confidence: 'firm',
   cwe: ['CWE-798'],
@@ -92,7 +93,7 @@ export const secretsRule: Rule = {
         column: loc?.column ?? 0,
         cwe: secretsRule.cwe,
         asvs: secretsRule.asvs,
-        fix: 'Przenieś sekret poza kod, do zmiennej środowiskowej albo do wp-config.php poza repozytorium. Jeśli trafił do repo, rotuj go.',
+        fix: ctx.t('secret.fix'),
       });
     };
 
@@ -108,7 +109,7 @@ export const secretsRule: Rule = {
         v,
         'medium',
         'heuristic',
-        `Wartość przypisana do "${nameSource}" wygląda na zaszyty sekret.`,
+        ctx.t('secret.byName', { name: nameSource }),
       );
       return true;
     };
@@ -119,7 +120,10 @@ export const secretsRule: Rule = {
       // Przebieg dostawców na każdym literale tekstowym.
       if (n.kind === 'string' && typeof n.value === 'string') {
         const hit = matchProvider(n.value);
-        if (hit) emit(n, hit.severity, hit.confidence ?? 'firm', `Wykryto ${hit.label} zaszyty w kodzie.${hit.note ?? ''}`);
+        if (hit) {
+          const note = hit.noteKey ? ` ${ctx.t(hit.noteKey)}` : '';
+          emit(n, hit.severity, hit.confidence ?? 'firm', ctx.t('secret.provider', { label: ctx.t(hit.labelKey) }) + note);
+        }
         return;
       }
 

@@ -17,7 +17,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Test e2e CLI: podatne próbki łamią build, bezpieczne przechodzą, --extended działa.
+      # End-to-end CLI test: vulnerable samples fail the build, safe ones pass, --extended and --lang work.
       - name: Smoke CLI
         run: |
           code=0
@@ -27,8 +27,18 @@ jobs:
           code=0
           node dist/cli.js test/fixtures/vulnerable --extended --json > /dev/null || code=$?
           test "$code" = "1"
+          # Language: English by default, Polish on request.
+          out=$(node dist/cli.js --help)
+          echo "$out" | grep -q "Usage:"
+          out=$(node dist/cli.js --help --lang pl)
+          echo "$out" | grep -q "Użycie:"
+          out=$(WPCODERSCAN_LANG=pl node dist/cli.js --help)
+          echo "$out" | grep -q "Użycie:"
+          code=0
+          node dist/cli.js test/fixtures/safe --lang xx > /dev/null 2>&1 || code=$?
+          test "$code" = "2"
 
-  # Sprawdza, że akcja z action.yml buduje skaner i przechodzi na bezpiecznych próbkach.
+  # Checks that the action from action.yml builds the scanner and passes on the safe samples.
   action:
     runs-on: ubuntu-latest
     steps:

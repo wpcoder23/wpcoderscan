@@ -7,7 +7,7 @@
 // wtyczki nie jest zgłaszane, bo tak działa większość szablonów w WordPressie.
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
-import { CODE_SPEC, EXEC_SPEC, INCLUDE_SPEC, originText, TaintAnalyzer, type TaintHit } from './taint';
+import { CODE_SPEC, EXEC_SPEC, INCLUDE_SPEC, originText, TaintAnalyzer, viaText, type TaintHit } from './taint';
 import type { Confidence, Finding, FileContext, PhpNode, Rule, Severity } from './types';
 
 // Funkcje uruchamiające polecenia systemowe.
@@ -23,7 +23,7 @@ const SHELL_SINKS = new Set([
 
 export const rceRule: Rule = {
   id: 'wp.rce.dynamic',
-  title: 'Dynamiczne wykonanie kodu lub polecenia systemowego',
+  titleKey: 'rule.wp.rce.dynamic.title',
   severity: 'critical',
   confidence: 'firm',
   cwe: ['CWE-94'],
@@ -63,9 +63,13 @@ export const rceRule: Rule = {
       hit: TaintHit,
       critical: Severity,
     ): { sev: Severity; conf: Confidence; from: string } | null => {
-      if (hit.direct) return { sev: critical, conf: 'firm', from: 'od użytkownika' };
+      if (hit.direct) return { sev: critical, conf: 'firm', from: ctx.t('rce.from.direct') };
       if (hit.viaVar) {
-        return { sev: 'high', conf: 'heuristic', from: `ze zmiennej $${hit.via ?? ''} zasilonej danymi ${originText(hit)}` };
+        return {
+          sev: 'high',
+          conf: 'heuristic',
+          from: ctx.t('rce.from.viaVar', { var: viaText(hit), origin: originText(hit, ctx.t) }),
+        };
       }
       return null;
     };
@@ -100,10 +104,10 @@ export const rceRule: Rule = {
           n,
           g ? g.sev : 'medium',
           g ? g.conf : 'heuristic',
-          'eval wykonuje kod zbudowany dynamicznie. To prosta droga do zdalnego wykonania kodu.',
+          ctx.t('rce.eval.message'),
           ['CWE-95'],
           ['5.2.4'],
-          'Usuń eval. Zbuduj logikę wprost w PHP, bez wykonywania tekstu jako kodu.',
+          ctx.t('rce.eval.fix'),
         );
         return;
       }
@@ -117,10 +121,10 @@ export const rceRule: Rule = {
           n,
           g.sev,
           g.conf,
-          `include lub require ze ścieżką ${g.from}. Grozi dołączeniem obcego pliku i wykonaniem kodu.`,
+          ctx.t('rce.include.message', { from: g.from }),
           ['CWE-98'],
           ['12.3.1'],
-          'Nie buduj ścieżki z danych wejściowych. Użyj stałej listy dozwolonych plików (allowlista) albo ścieżek względem katalogu wtyczki.',
+          ctx.t('rce.include.fix'),
         );
         return;
       }
@@ -133,10 +137,10 @@ export const rceRule: Rule = {
           n,
           g.sev,
           g.conf,
-          `Polecenie w backtickach ${g.from}. Grozi wstrzyknięciem polecenia systemowego.`,
+          ctx.t('rce.backtick.message', { from: g.from }),
           ['CWE-78'],
           ['5.3.8'],
-          'Unikaj powłoki. Jeśli musisz, przekaż argumenty przez escapeshellarg i nie sklejaj ich w tekst polecenia.',
+          ctx.t('rce.shell.fix'),
         );
         return;
       }
@@ -150,10 +154,10 @@ export const rceRule: Rule = {
           n,
           g.sev,
           g.conf,
-          `${name}() uruchamia polecenie ${g.from}. Grozi wstrzyknięciem polecenia systemowego.`,
+          ctx.t('rce.shell.message', { name, from: g.from }),
           ['CWE-78'],
           ['5.3.8'],
-          'Unikaj powłoki. Jeśli musisz, przekaż argumenty przez escapeshellarg i nie sklejaj ich w tekst polecenia.',
+          ctx.t('rce.shell.fix'),
         );
       }
     });

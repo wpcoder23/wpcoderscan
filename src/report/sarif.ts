@@ -4,7 +4,8 @@
 // nigdy nie była błędem (error), bo domyślnie nie łamie build. Dzięki temu
 // zakładka Security zgadza się z zachowaniem CI.
 import { createHash } from 'node:crypto';
-import { allRules } from '../rules';
+import { createTranslator } from '../i18n';
+import { allRules, extendedRules } from '../rules';
 import type { Confidence, Finding, Severity } from '../rules/types';
 import type { ScanResult } from '../engine';
 import { VERSION } from '../version';
@@ -121,16 +122,20 @@ function fingerprint(f: Finding): string {
 }
 
 export function buildSarif(result: ScanResult): SarifLog {
+  const t = createTranslator(result.lang);
+  // Opisy reguł rozszerzonych dokładamy tylko wtedy, gdy wynik je zawiera.
+  const reported = new Set(result.findings.map((f) => f.ruleId));
+  const described = [...allRules, ...extendedRules.filter((r) => reported.has(r.id))];
   const ruleIndex = new Map<string, number>();
-  allRules.forEach((r, i) => ruleIndex.set(r.id, i));
+  described.forEach((r, i) => ruleIndex.set(r.id, i));
 
-  const rules: SarifRuleDescriptor[] = allRules.map((r) => ({
+  const rules: SarifRuleDescriptor[] = described.map((r) => ({
     id: r.id,
     name: r.id,
-    shortDescription: { text: r.title },
-    fullDescription: { text: r.title },
+    shortDescription: { text: t(r.titleKey) },
+    fullDescription: { text: t(r.titleKey) },
     helpUri: INFO_URI,
-    help: { text: r.title },
+    help: { text: t(r.titleKey) },
     defaultConfiguration: { level: sarifLevel(r.severity, r.confidence) },
     properties: {
       tags: tags(r.cwe, r.asvs),

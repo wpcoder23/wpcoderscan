@@ -34,7 +34,7 @@ class Ajax {
 }`);
     expect(f).toHaveLength(2);
     expect(f.map((x) => x.message).join(' ')).toContain('nonce');
-    expect(f.map((x) => x.message).join(' ')).toContain('uprawnień');
+    expect(f.map((x) => x.message).join(' ')).toContain('capabilities');
   });
 
   it('wariant [ self::class, metoda ] i tekst Klasa::metoda', async () => {

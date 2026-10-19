@@ -1,5 +1,6 @@
 // Raport w terminalu. Bez zależności, kolory przez kody ANSI.
 import type { ScanResult } from '../engine';
+import { createTranslator } from '../i18n';
 import { previewPatch, readSource } from '../fix/suggest';
 import type { Severity } from '../rules/types';
 
@@ -18,14 +19,6 @@ function c(code: string, s: string): string {
   return useColor ? code + s + C.reset : s;
 }
 
-const LABEL: Record<Severity, string> = {
-  critical: 'KRYTYCZNE',
-  high: 'WYSOKIE',
-  medium: 'ŚREDNIE',
-  low: 'NISKIE',
-  info: 'INFO',
-};
-
 function sevColor(s: Severity): string {
   if (s === 'critical' || s === 'high') return C.red;
   if (s === 'medium') return C.yellow;
@@ -38,6 +31,7 @@ export interface TerminalOptions {
 }
 
 export function renderTerminal(r: ScanResult, opts: TerminalOptions = {}): string {
+  const t = createTranslator(r.lang);
   const out: string[] = [];
   const cwd = opts.cwd ?? process.cwd();
   const sources = new Map<string, string | null>();
@@ -46,21 +40,21 @@ export function renderTerminal(r: ScanResult, opts: TerminalOptions = {}): strin
     return sources.get(file) ?? null;
   };
   out.push('');
-  out.push(c(C.bold, `WPCoderScan  skan: ${r.target}`));
-  out.push(c(C.gray, `plików: ${r.filesScanned}, znalezisk: ${r.findings.length}`));
+  out.push(c(C.bold, t('report.title', { target: r.target })));
+  out.push(c(C.gray, t('report.counts', { files: r.filesScanned, findings: r.findings.length })));
   out.push('');
 
   for (const f of r.findings) {
-    const tag = c(sevColor(f.severity) + C.bold, LABEL[f.severity].padEnd(9));
-    const conf = f.confidence === 'heuristic' ? c(C.gray, '  heurystyka') : '';
+    const tag = c(sevColor(f.severity) + C.bold, t(`severity.${f.severity}`).padEnd(9));
+    const conf = f.confidence === 'heuristic' ? c(C.gray, `  ${t('report.heuristic')}`) : '';
     out.push(`${tag} ${c(C.bold, f.ruleId)}${conf}`);
     out.push(`  ${f.file}:${f.line}:${f.column}`);
     out.push(`  ${f.message}`);
     if (f.snippet) out.push(c(C.gray, `    ${f.snippet}`));
-    if (f.fix) out.push(c(C.green, `    naprawa: ${f.fix}`));
+    if (f.fix) out.push(c(C.green, `    ${t('report.fix', { text: f.fix })}`));
     if (opts.suggest && f.patch) {
-      const note = f.patch.safety === 'manual' ? ' (do decyzji)' : '';
-      out.push(c(C.green, `    podpowiedź${note}: ${f.patch.label}`));
+      const key = f.patch.safety === 'manual' ? 'report.suggestion.manual' : 'report.suggestion';
+      out.push(c(C.green, `    ${t(key, { label: f.patch.label })}`));
       const code = source(f.file);
       for (const line of code ? previewPatch(code, f.patch) : []) {
         out.push(c(line.startsWith('-') ? C.red : C.green, `      ${line}`));
@@ -70,22 +64,22 @@ export function renderTerminal(r: ScanResult, opts: TerminalOptions = {}): strin
   }
 
   const s = r.score;
-  out.push(c(C.bold, `Wynik: ${s.value}/100`));
+  out.push(c(C.bold, t('report.score', { value: s.value })));
   out.push(
-    `${c(C.red, `krytyczne ${s.counts.critical}`)}   ${c(C.red, `wysokie ${s.counts.high}`)}   ` +
-      `${c(C.yellow, `średnie ${s.counts.medium}`)}   ${c(C.blue, `niskie ${s.counts.low}`)}`,
+    `${c(C.red, t('report.count.critical', { n: s.counts.critical }))}   ${c(C.red, t('report.count.high', { n: s.counts.high }))}   ` +
+      `${c(C.yellow, t('report.count.medium', { n: s.counts.medium }))}   ${c(C.blue, t('report.count.low', { n: s.counts.low }))}`,
   );
 
   if (r.errors.length) {
     out.push('');
-    out.push(c(C.gray, `błędy skanera: ${r.errors.length}`));
+    out.push(c(C.gray, t('report.errors', { count: r.errors.length })));
     for (const e of r.errors) out.push(c(C.gray, `  ${e.file}: ${e.message}`));
   }
 
   const withPatch = r.findings.filter((f) => f.patch).length;
   if (withPatch > 0 && !opts.suggest) {
     out.push('');
-    out.push(c(C.gray, `podpowiedzi napraw: ${withPatch} (pokaż je opcją --suggest)`));
+    out.push(c(C.gray, t('report.patchHint', { count: withPatch })));
   }
 
   out.push('');

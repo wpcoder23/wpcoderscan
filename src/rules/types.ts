@@ -1,5 +1,7 @@
 // Typy wspólne dla silnika reguł.
-// Identyfikatory po angielsku, komunikaty dla użytkownika po polsku.
+// Identyfikatory po angielsku. Komunikaty dla użytkownika pochodzą z katalogu
+// tłumaczeń (src/i18n), więc wynik jest w języku wybranym przy skanie.
+import type { Lang, MessageKey, Translate } from '../i18n';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
@@ -27,7 +29,7 @@ export interface TextEdit {
 // pracy (po przeglądzie). 'manual' wymaga decyzji człowieka, np. doboru kontekstu.
 export interface Patch {
   safety: 'complete' | 'manual';
-  label: string; // po polsku, krótki opis zmiany
+  label: string; // krótki opis zmiany, w języku skanu
   edits: TextEdit[];
 }
 
@@ -36,7 +38,7 @@ export interface Finding {
   ruleId: string;
   severity: Severity;
   confidence: Confidence; // pewne czy heurystyka
-  message: string; // po polsku, dla człowieka
+  message: string; // dla człowieka, w języku skanu
   file: string; // ścieżka względna do katalogu skanowania
   line: number;
   column: number;
@@ -44,7 +46,7 @@ export interface Finding {
   snippet?: string; // fragment kodu z okolicy
   cwe?: string[]; // np. ['CWE-89']
   asvs?: string[]; // np. ['5.3.4']
-  fix?: string; // krótka wskazówka naprawy, po polsku
+  fix?: string; // krótka wskazówka naprawy, w języku skanu
   patch?: Patch; // konkretna zmiana kodu, gdy da się ją wyliczyć i zweryfikować
 }
 
@@ -61,6 +63,8 @@ export interface FileContext {
   absolutePath: string;
   code: string;
   lines: string[]; // kod rozbity na linie, do snippetów
+  lang: Lang; // język komunikatów tego skanu
+  t: Translate; // tłumaczy klucz z katalogu na język skanu
   ast: PhpNode; // korzeń AST (Program)
   snippetAt(line: number): string; // fragment kodu dla danej linii
 }
@@ -68,7 +72,7 @@ export interface FileContext {
 // Reguła wykrywająca jedną klasę podatności.
 export interface Rule {
   id: string; // slug, np. 'wp.sqli.unprepared'
-  title: string; // krótki opis po polsku
+  titleKey: MessageKey; // klucz krótkiego opisu reguły w katalogu tłumaczeń
   severity: Severity; // domyślny poziom
   confidence: Confidence; // domyślny poziom pewności reguły
   cwe?: string[];

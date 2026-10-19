@@ -7,6 +7,7 @@
 // użytkownika fałszywymi alarmami. Analizę między funkcjami zostawiamy na Pro.
 import { asNode, baseVariable, calledName, offsetName, SUPERGLOBALS, type AnyNode } from './ast-utils';
 import { guardedNames } from './guards';
+import type { Translate } from '../i18n';
 import type { PhpNode } from './types';
 
 export interface TaintHit {
@@ -623,11 +624,16 @@ export class TaintAnalyzer {
   }
 }
 
-// Opis źródła danych do komunikatów reguł.
-export function originText(hit: TaintHit): string {
-  if (hit.source === 'request') return 'z żądania REST';
-  if (hit.source === 'url') return 'z adresu bieżącej strony (add_query_arg bez adresu)';
-  if (hit.source === 'param') return 'z parametru funkcji';
-  if (hit.source === 'shortcode') return 'z atrybutów shortcode';
-  return 'od użytkownika';
+// Nazwa skażonej zmiennej z dolarem, do komunikatów reguł.
+export function viaText(hit: TaintHit): string {
+  return `$${hit.via ?? ''}`;
+}
+
+// Opis źródła danych do komunikatów reguł, w języku skanu.
+export function originText(hit: TaintHit, t: Translate): string {
+  if (hit.source === 'request') return t('origin.request');
+  if (hit.source === 'url') return t('origin.url');
+  if (hit.source === 'param') return t('origin.param');
+  if (hit.source === 'shortcode') return t('origin.shortcode');
+  return t('origin.user');
 }

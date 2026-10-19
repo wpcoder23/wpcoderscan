@@ -84,7 +84,7 @@ function handler( WP_REST_Request $req ) {
     );
     expect(f).toHaveLength(1);
     expect(f[0].confidence).toBe('heuristic');
-    expect(f[0].message).toContain('żądania REST');
+    expect(f[0].message).toContain('REST request');
   });
 
   it('parametr o nazwie $request bez typu też działa, w tym $request[...]', async () => {
@@ -381,8 +381,8 @@ function demo_shortcode( $atts ) {
 }`),
     );
     expect(f).toHaveLength(1);
-    expect(f[0].message).toContain('atrybutów shortcode');
-    expect(f[0].message).toContain('zapisany XSS');
+    expect(f[0].message).toContain('shortcode attributes');
+    expect(f[0].message).toContain('stored XSS');
   });
 
   it('extract( shortcode_atts ) tworzy zmienne ze skażeniem', async () => {

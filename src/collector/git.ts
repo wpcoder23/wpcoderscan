@@ -4,10 +4,11 @@
 import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 import path from 'node:path';
+import { createTranslator, DEFAULT_LANG, type Translate } from '../i18n';
 
 // Zwraca bezwzględne ścieżki istniejących plików PHP zmienionych wobec ref.
 // diff-filter ACMR pomija pliki usunięte, których i tak nie ma na dysku.
-export function gitChangedPhpFiles(ref: string, cwd: string): string[] {
+export function gitChangedPhpFiles(ref: string, cwd: string, t: Translate = createTranslator(DEFAULT_LANG)): string[] {
   let top: string;
   try {
     top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -16,7 +17,7 @@ export function gitChangedPhpFiles(ref: string, cwd: string): string[] {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
-    throw new Error('katalog nie jest repozytorium git, tryb --diff wymaga gita');
+    throw new Error(t('git.notRepo'));
   }
 
   let out: string;
@@ -27,7 +28,7 @@ export function gitChangedPhpFiles(ref: string, cwd: string): string[] {
       { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     );
   } catch {
-    throw new Error(`git diff nie powiodło się dla punktu odniesienia "${ref}"`);
+    throw new Error(t('git.diffFailed', { ref }));
   }
 
   const files: string[] = [];

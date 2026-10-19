@@ -6,12 +6,12 @@
 import { walk } from '../parser';
 import { asNode, nodeStart, type AnyNode } from './ast-utils';
 import { SINKS, wpdbMethodCall } from './sqli';
-import { SQL_PARAM_SPEC, SQL_SPEC, TaintAnalyzer } from './taint';
+import { SQL_PARAM_SPEC, SQL_SPEC, TaintAnalyzer, viaText } from './taint';
 import type { Finding, FileContext, Rule } from './types';
 
 export const sqliParamRule: Rule = {
   id: 'wp.sqli.param_unprepared',
-  title: 'Parametr funkcji wklejony do zapytania $wpdb bez prepare',
+  titleKey: 'rule.wp.sqli.param_unprepared.title',
   severity: 'medium',
   confidence: 'heuristic',
   cwe: ['CWE-89'],
@@ -39,13 +39,13 @@ export const sqliParamRule: Rule = {
         ruleId: sqliParamRule.id,
         severity: 'medium',
         confidence: 'heuristic',
-        message: `Wywołanie $wpdb->${method}() buduje zapytanie z parametru $${hit.via ?? ''} funkcji bez prepare. Jeśli do funkcji trafiają dane od użytkownika, grozi SQL injection.`,
+        message: ctx.t('sqli.param.message', { method, var: viaText(hit) }),
         file: ctx.file,
         line: loc?.line ?? 1,
         column: loc?.column ?? 0,
         cwe: sqliParamRule.cwe,
         asvs: sqliParamRule.asvs,
-        fix: 'Użyj $wpdb->prepare() z placeholderami, a dla liczb rzutuj na int albo absint. Nazwy kolumn i kierunek sortowania sprawdź na liście dozwolonych wartości.',
+        fix: ctx.t('sqli.param.fix'),
       });
     });
     return findings;

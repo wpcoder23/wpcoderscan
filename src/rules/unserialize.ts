@@ -44,14 +44,14 @@ function buildPatch(ctx: FileContext, node: AnyNode): Patch | undefined {
   const extra = allowedClassesArg(detectParenStyle(ctx.code), detectArrayStyle(ctx.code));
   return {
     safety: 'complete',
-    label: 'Zablokuj tworzenie obiektów: dodaj allowed_classes => false.',
+    label: ctx.t('unserialize.patch'),
     edits: [{ start: at, end: at, replacement: `, ${extra}` }],
   };
 }
 
 export const unserializeRule: Rule = {
   id: 'wp.unserialize.user_input',
-  title: 'unserialize na danych od użytkownika',
+  titleKey: 'rule.wp.unserialize.user_input.title',
   severity: 'high',
   confidence: 'firm',
   cwe: ['CWE-502'],
@@ -78,15 +78,13 @@ export const unserializeRule: Rule = {
         ruleId: unserializeRule.id,
         severity: limited ? 'medium' : 'high',
         confidence: limited ? 'heuristic' : 'firm',
-        message: limited
-          ? `${name}() na danych z superglobala z ograniczoną listą klas. Sprawdź, czy żadna z nich nie ma metod magicznych, które można nadużyć.`
-          : `${name}() na danych z superglobala. Grozi wstrzyknięciem obiektu PHP (object injection).`,
+        message: ctx.t(limited ? 'unserialize.limited' : 'unserialize.full', { name }),
         file: ctx.file,
         line: loc?.line ?? 1,
         column: loc?.column ?? 0,
         cwe: unserializeRule.cwe,
         asvs: unserializeRule.asvs,
-        fix: 'Nie deserializuj danych od użytkownika. Użyj json_decode z danymi JSON, a jeśli musisz, wymuś allowed_classes => false.',
+        fix: ctx.t('unserialize.fix'),
         ...(patch ? { patch } : {}),
       });
     });

@@ -270,12 +270,10 @@ export function buildXssPatch(input: XssPatchInput): Patch | undefined {
   }
 
   used = [...new Set(used)];
-  const names = used.map((u) => `${u}()`).join(' i ');
+  const names = used.map((u) => `${u}()`).join(ctx.t('join.and'));
   return {
     safety: manual ? 'manual' : 'complete',
-    label: manual
-      ? `Opakuj dane w ${names}. Kontekst HTML nie wynika z kodu, więc sprawdź, czy to właściwa funkcja.`
-      : `Opakuj dane w ${names}.`,
+    label: ctx.t(manual ? 'xss.patch.manual' : 'xss.patch.complete', { names }),
     edits,
   };
 }

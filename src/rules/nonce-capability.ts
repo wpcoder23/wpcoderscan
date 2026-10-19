@@ -131,7 +131,7 @@ interface Handler {
 
 export const nonceCapabilityRule: Rule = {
   id: 'wp.auth.unprotected_action',
-  title: 'Uchwyt akcji bez weryfikacji nonce lub uprawnień',
+  titleKey: 'rule.wp.auth.unprotected_action.title',
   severity: 'high',
   confidence: 'heuristic',
   cwe: ['CWE-352', 'CWE-862'],
@@ -226,20 +226,20 @@ export const nonceCapabilityRule: Rule = {
       if (!hasNonce) {
         emit(
           h.node,
-          `Uchwyt haka "${h.hook}" nie weryfikuje nonce. Grozi CSRF.`,
+          ctx.t('auth.nonce.message', { hook: h.hook }),
           ['CWE-352'],
           ['4.2.2'],
-          'Dodaj check_admin_referer lub check_ajax_referer na początku uchwytu, a w formularzu pole wp_nonce_field.',
+          ctx.t('auth.nonce.fix'),
         );
       }
       // Uprawnień wymagamy tylko tam, gdzie działa zalogowany użytkownik.
       if (h.kind === 'priv' && !containsCall(body, CAP_FUNCS)) {
         emit(
           h.node,
-          `Uchwyt haka "${h.hook}" nie sprawdza uprawnień użytkownika. Grozi nieautoryzowanym działaniem.`,
+          ctx.t('auth.capability.message', { hook: h.hook }),
           ['CWE-862'],
           ['4.1.3'],
-          'Dodaj current_user_can z właściwą zdolnością na początku uchwytu i przerwij, gdy brak uprawnień.',
+          ctx.t('auth.capability.fix'),
           // Sam nonce zawęża atak do zalogowanych użytkowników (na przykład subskrybentów).
           hasNonce ? 'medium' : 'high',
         );

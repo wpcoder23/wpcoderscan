@@ -2,6 +2,7 @@
 // po jej nałożeniu kod nadal się parsuje bez błędów, znalezisko znika, a liczba
 // znalezisk żadnej reguły nie rośnie. Dzięki temu nie podajemy złych poprawek.
 import { analyzeSource } from '../engine/analyze';
+import type { Lang } from '../i18n';
 import type { Finding, Patch, Rule } from '../rules/types';
 import { applyEdits, patchesConflict } from './apply';
 
@@ -17,6 +18,7 @@ export interface VerifyInput {
   code: string;
   before: Finding[]; // wszystkie znaleziska pliku przed zmianą
   rules: Rule[];
+  lang?: Lang; // język komunikatów ponownej analizy, domyślnie angielski
 }
 
 export function verifyPatch(input: VerifyInput, finding: Finding, patch: Patch): boolean {
@@ -27,7 +29,7 @@ export function verifyPatch(input: VerifyInput, finding: Finding, patch: Patch):
   const patched = applyEdits(input.code, patch.edits);
   if (patched === null || patched === input.code) return false;
 
-  const after = analyzeSource(input.rel, input.abs, patched, input.rules);
+  const after = analyzeSource(input.rel, input.abs, patched, input.rules, input.lang);
   if (!after.parsed || after.parseErrors > 0 || after.errors.length > 0) return false;
 
   const was = countBy(input.before);
@@ -46,7 +48,7 @@ export function resolvePatches(input: VerifyInput): void {
   if (withPatch.length === 0) return;
 
   // Plik z błędami składni: nie ufamy offsetom, żadnych podpowiedzi.
-  const base = analyzeSource(input.rel, input.abs, input.code, input.rules);
+  const base = analyzeSource(input.rel, input.abs, input.code, input.rules, input.lang);
   if (!base.parsed || base.parseErrors > 0) {
     for (const f of withPatch) delete f.patch;
     return;
