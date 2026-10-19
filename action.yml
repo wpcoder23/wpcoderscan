@@ -12,9 +12,9 @@ inputs:
     required: false
     default: '.'
   fail-on:
-    description: 'Level at which the action fails: critical, high, medium, low or none.'
+    description: 'Level at which the action fails: critical, high, medium, low or none. Empty means the settings file, then high.'
     required: false
-    default: 'high'
+    default: ''
   strict:
     description: 'When true, heuristic findings count toward the exit code too.'
     required: false
@@ -24,9 +24,17 @@ inputs:
     required: false
     default: 'false'
   lang:
-    description: 'Language of messages: en or pl.'
+    description: 'Language of messages: en or pl. Empty means the settings file, then en.'
     required: false
-    default: 'en'
+    default: ''
+  baseline:
+    description: 'Path of a baseline file (the --baseline flag). Findings saved in it are not reported. Empty means the settings file, then none.'
+    required: false
+    default: ''
+  config:
+    description: 'Path of a settings file (the --config flag). Empty means .wpcoderscan.json in the repository root, if the file exists.'
+    required: false
+    default: ''
   upload-sarif:
     description: 'When true, upload the SARIF report to the Security tab (needs the security-events: write permission).'
     required: false
@@ -59,13 +67,20 @@ runs:
         WPCS_STRICT: ${{ inputs.strict }}
         WPCS_EXTENDED: ${{ inputs.extended }}
         WPCS_LANG: ${{ inputs.lang }}
+        WPCS_BASELINE: ${{ inputs.baseline }}
+        WPCS_CONFIG: ${{ inputs.config }}
         WPCS_SARIF: ${{ inputs.sarif-file }}
       run: |
-        STRICT=""
-        if [ "$WPCS_STRICT" = "true" ]; then STRICT="--strict"; fi
-        if [ "$WPCS_EXTENDED" = "true" ]; then STRICT="$STRICT --extended"; fi
-        node "${{ github.action_path }}/dist/cli.js" "$WPCS_PATH" \
-          --sarif $STRICT --lang "$WPCS_LANG" --fail-on "$WPCS_FAIL_ON" > "$WPCS_SARIF"
+        # A flag is passed only when its input is set, so that the settings file
+        # (.wpcoderscan.json in the repository root) can decide the rest.
+        ARGS=(--sarif)
+        if [ "$WPCS_STRICT" = "true" ]; then ARGS+=(--strict); fi
+        if [ "$WPCS_EXTENDED" = "true" ]; then ARGS+=(--extended); fi
+        if [ -n "$WPCS_LANG" ]; then ARGS+=(--lang "$WPCS_LANG"); fi
+        if [ -n "$WPCS_FAIL_ON" ]; then ARGS+=(--fail-on "$WPCS_FAIL_ON"); fi
+        if [ -n "$WPCS_BASELINE" ]; then ARGS+=(--baseline "$WPCS_BASELINE"); fi
+        if [ -n "$WPCS_CONFIG" ]; then ARGS+=(--config "$WPCS_CONFIG"); fi
+        node "${{ github.action_path }}/dist/cli.js" "$WPCS_PATH" "${ARGS[@]}" > "$WPCS_SARIF"
 
     - name: Upload SARIF to the Security tab
       if: ${{ always() && inputs.upload-sarif == 'true' }}

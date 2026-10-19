@@ -23,9 +23,18 @@ jobs:
 
       # A firm finding at the high level or above fails this step and the
       # check. SARIF is uploaded to the Security tab in that case too.
-      - uses: wpcoder23/wpcoderscan@v0.6.0
+      - uses: wpcoder23/wpcoderscan@v0.7.0
         with:
           path: .
           fail-on: high
           strict: 'false'
           # lang: pl   # Polish messages (default: en)
+          #
+          # Adopting the scanner in an existing codebase. Save today's findings
+          # with: npx wpcoderscan . --write-baseline .wpcoderscan-baseline.json
+          # Commit the file. Then only new findings fail the build.
+          # baseline: .wpcoderscan-baseline.json
+          #
+          # The scanner reads .wpcoderscan.json from the repository root on its own.
+          # Set "config" only for a settings file in another place.
+          # config: ci/wpcoderscan.json

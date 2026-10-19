@@ -37,6 +37,46 @@ jobs:
           code=0
           node dist/cli.js test/fixtures/safe --lang xx > /dev/null 2>&1 || code=$?
           test "$code" = "2"
+          # The equals form of --fail-on works.
+          node dist/cli.js test/fixtures/vulnerable --fail-on=none > /dev/null
+
+      # Adoption: baseline, ignore comments and the settings file, on a throwaway project.
+      - name: Smoke adoption
+        run: |
+          cli="$PWD/dist/cli.js"
+          dir=$(mktemp -d)
+          mkdir "$dir/plugin" "$dir/reviewed"
+          printf '%s\n' '<?php' 'include $_GET["page"];' > "$dir/plugin/a.php"
+          printf '%s\n' '<?php' '// wpcoderscan-ignore wp.rce.dynamic -- reviewed' 'include $_GET["page"];' > "$dir/reviewed/a.php"
+          cd "$dir"
+          # The finding fails the build.
+          code=0
+          node "$cli" plugin > /dev/null || code=$?
+          test "$code" = "1"
+          # A baseline accepts it, and a new finding fails the build again.
+          node "$cli" plugin --write-baseline base.json 2> /dev/null
+          test -s base.json
+          node "$cli" plugin --baseline base.json > /dev/null
+          printf '%s\n' 'unserialize( $_POST["data"] );' >> plugin/a.php
+          code=0
+          node "$cli" plugin --baseline base.json > /dev/null || code=$?
+          test "$code" = "1"
+          # An ignore comment silences the finding, unless comments are turned off.
+          node "$cli" reviewed > /dev/null
+          code=0
+          node "$cli" reviewed --no-ignore-comments > /dev/null || code=$?
+          test "$code" = "1"
+          # The settings file decides, and --no-config skips it.
+          printf '%s\n' '{ "failOn": "none" }' > .wpcoderscan.json
+          node "$cli" plugin > /dev/null 2>&1
+          code=0
+          node "$cli" plugin --no-config > /dev/null || code=$?
+          test "$code" = "1"
+          # A broken settings file is an error.
+          printf '%s\n' '{ "failOnn": "none" }' > .wpcoderscan.json
+          code=0
+          node "$cli" plugin > /dev/null 2>&1 || code=$?
+          test "$code" = "2"
 
   # Checks that the action from action.yml builds the scanner and passes on the safe samples.
   action:
@@ -47,4 +87,17 @@ jobs:
         with:
           path: test/fixtures/safe
           fail-on: high
+          upload-sarif: 'false'
+
+  # Checks that the settings file reaches the scanner through the action. The vulnerable samples
+  # would fail the step at the default gate. The file turns the gate off, and fail-on is left empty.
+  action-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write a settings file
+        run: echo '{ "failOn": "none" }' > .wpcoderscan.json
+      - uses: ./
+        with:
+          path: test/fixtures/vulnerable
           upload-sarif: 'false'
