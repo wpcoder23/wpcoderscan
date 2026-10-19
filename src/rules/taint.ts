@@ -205,6 +205,23 @@ const PASSTHROUGH = new Set([
   'esc_html', 'esc_attr', 'esc_url', 'esc_url_raw', 'esc_js', 'esc_textarea',
   'wp_kses', 'wp_kses_post', 'wp_kses_data', 'htmlspecialchars', 'htmlentities',
   'wp_json_encode', 'addslashes',
+  // Przekształcenia tekstu i tablic, które zwracają fragment albo kopię argumentu.
+  'strval', 'str_pad', 'strrev', 'wordwrap', 'addcslashes', 'quotemeta', 'chunk_split', 'strtr', 'strstr', 'stristr',
+  'strrchr', 'strtok', 'str_split', 'mb_str_split', 'preg_split', 'preg_replace_callback', 'preg_filter', 'preg_quote',
+  'utf8_decode', 'utf8_encode', 'mb_convert_encoding', 'mb_convert_case', 'mb_strimwidth', 'iconv',
+  'array_pop', 'array_shift', 'array_diff', 'array_flip', 'array_merge_recursive', 'array_replace', 'array_pad',
+  'array_chunk', 'array_column', 'array_fill_keys', 'array_splice', 'current', 'reset', 'end', 'next', 'prev',
+  'wp_parse_args', 'wp_slash', 'parse_url',
+  // Ścieżki sklejane z argumentu bez żadnej ucieczki.
+  'dirname', 'wp_normalize_path', 'trailingslashit', 'untrailingslashit',
+]);
+
+// Funkcje budujące adres witryny z fragmentu podanego w argumencie. Dla XSS niosą skażenie dalej (adres wypisany
+// bez esc_url), ale host takiego adresu zawsze jest naszą witryną, więc dla SSRF nie są przepustką.
+const URL_BUILDERS = new Set([
+  'admin_url', 'site_url', 'home_url', 'network_admin_url', 'network_site_url', 'network_home_url',
+  'self_admin_url', 'get_admin_url', 'get_site_url', 'get_home_url', 'plugins_url', 'content_url',
+  'includes_url', 'wp_login_url', 'wp_logout_url', 'wp_lostpassword_url',
 ]);
 
 // Czyszczenie wspólne dla wszystkich klas ujść: wynik jest liczbą, skrótem,
@@ -256,7 +273,7 @@ export const SQL_SPEC: TaintSpec = {
 export const SQL_PARAM_SPEC: TaintSpec = { ...SQL_SPEC, paramSource: true };
 export const INCLUDE_SPEC: TaintSpec = { clean: new Set(INCLUDE_CLEAN) };
 export const EXEC_SPEC: TaintSpec = { clean: new Set(EXEC_CLEAN) };
-export const XSS_SPEC: TaintSpec = { clean: new Set(XSS_CLEAN), queryArgSource: true };
+export const XSS_SPEC: TaintSpec = { clean: new Set(XSS_CLEAN), queryArgSource: true, extraPassthrough: URL_BUILDERS };
 
 // Ścieżka pliku: basename i sanitize_file_name zostawiają z nazwy tylko jej ostatni człon, więc nie da się
 // wyjść poza katalog. Wynik wp_unique_filename też jest oczyszczoną nazwą.
@@ -560,6 +577,121 @@ interface TaintEvent {
   compound: boolean;
   key?: string; // zdarzenie dotyczy elementu names[0][key], nie całej zmiennej
   guarded?: ReadonlySet<string>; // zmienne sprawdzone listą dozwolonych wartości przed tym miejscem
+  path: BranchStep[]; // gałęzie warunków i pętli, w których leży zdarzenie
+}
+
+// Gałąź konstrukcji warunkowej (if, switch, pętla, try), w której leży miejsce w kodzie.
+interface BranchStep {
+  construct: number; // początek konstrukcji
+  branch: number; // początek gałęzi
+  tests: AnyNode[]; // wyrażenia, od których zależy wejście do gałęzi
+}
+
+function rangeOf(node: AnyNode | undefined): [number, number] | undefined {
+  const loc = node?.loc as { start?: { offset?: number }; end?: { offset?: number } } | undefined;
+  const s = loc?.start?.offset;
+  const e = loc?.end?.offset;
+  return typeof s === 'number' && typeof e === 'number' ? [s, e] : undefined;
+}
+
+function within(node: AnyNode | undefined, off: number): boolean {
+  const r = rangeOf(node);
+  return !!r && off >= r[0] && off < r[1];
+}
+
+// Gałęzie warunków i pętli, przez które przechodzi miejsce o pozycji off, od zewnętrznej do wewnętrznej.
+// ancestors to przodkowie od zakresu w dół. Test warunku i nagłówek pętli nie należą do żadnej gałęzi.
+function branchPath(ancestors: readonly AnyNode[], off: number): BranchStep[] {
+  const path: BranchStep[] = [];
+  const step = (construct: AnyNode, branch: AnyNode | undefined, tests: Array<AnyNode | undefined>): boolean => {
+    if (!branch || !within(branch, off)) return false;
+    path.push({ construct: startOffset(construct), branch: startOffset(branch), tests: tests.filter((t): t is AnyNode => !!t) });
+    return true;
+  };
+  for (const n of ancestors) {
+    switch (n.kind) {
+      case 'if':
+        if (!step(n, asNode(n.body), [asNode(n.test)])) step(n, asNode(n.alternate), [asNode(n.test)]);
+        break;
+      case 'switch': {
+        const body = asNode(n.body);
+        const cases = body && Array.isArray(body.children) ? (body.children as unknown[]) : [];
+        for (const c of cases) {
+          const cs = asNode(c);
+          if (cs && step(n, cs, [asNode(n.test), asNode(cs.test)])) break;
+        }
+        break;
+      }
+      case 'while':
+      case 'for':
+        step(n, asNode(n.body), [asNode(n.test)]);
+        break;
+      case 'foreach':
+        step(n, asNode(n.body), [asNode(n.source)]);
+        break;
+      case 'try':
+        // Treść try wykonuje się zwykle do końca, więc nie jest gałęzią. Gałęzią jest dopiero obsługa wyjątku.
+        for (const c of Array.isArray(n.catches) ? (n.catches as unknown[]) : []) if (step(n, asNode(c), [])) break;
+        break;
+      default:
+        break;
+    }
+  }
+  return path;
+}
+
+const mentionCache = new WeakMap<AnyNode, Set<string>>();
+
+// Nazwy zmiennych użytych w wyrażeniu.
+function mentionedVars(node: AnyNode): Set<string> {
+  const cached = mentionCache.get(node);
+  if (cached) return cached;
+  const out = new Set<string>();
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const e of value as unknown[]) visit(e);
+      return;
+    }
+    const v = asNode(value);
+    if (!v) return;
+    if (v.kind === 'variable' && typeof v.name === 'string') out.add(v.name);
+    for (const k of Object.keys(v)) {
+      if (SKIP_KEYS.has(k)) continue;
+      const child = v[k];
+      if (child && typeof child === 'object') visit(child);
+    }
+  };
+  visit(node);
+  mentionCache.set(node, out);
+  return out;
+}
+
+// Warunek, który sprawdza samą zmienną (if ( $x ), if ( ! empty( $x ) )), rozstrzyga o jej wartości w obu gałęziach,
+// więc przypisanie w takiej gałęzi uznajemy za pełne, a nie za jedną z możliwości.
+function stepMentions(step: BranchStep, name: string): boolean {
+  return step.tests.some((t) => mentionedVars(t).has(name));
+}
+
+type Relation = 'dominates' | 'may' | 'exclusive';
+
+// Jak zdarzenie z gałęzi ev odnosi się do ujścia w gałęzi sink. dominates: zdarzenie wykonuje się przed każdym
+// ujściem. may: wykona się tylko w części przebiegów. exclusive: leży w innej gałęzi tej samej konstrukcji.
+function relate(ev: BranchStep[], sink: BranchStep[], name: string): Relation {
+  if (ev.length === 0) return 'dominates';
+  let i = 0;
+  while (i < ev.length && i < sink.length && ev[i].construct === sink[i].construct && ev[i].branch === sink[i].branch) i++;
+  if (i === ev.length) return 'dominates';
+  if (i < sink.length && ev[i].construct === sink[i].construct) return 'exclusive';
+  for (let j = i; j < ev.length; j++) if (!stepMentions(ev[j], name)) return 'may';
+  return 'dominates';
+}
+
+// Łączy stan z dwóch zdarzeń. Późniejsze wygrywa, ale wartość po ucieczce cudzysłowów nie zasłania zwykłego skażenia.
+function joinOrigin(later: Origin, earlier: Origin): Origin {
+  if (later === 'none') return earlier;
+  if (earlier === 'none') return later;
+  if (later.endsWith('~') && !earlier.endsWith('~')) return earlier;
+  return later;
 }
 
 // Środowisko, w którym sprawdzone zmienne uchodzą za czyste.
@@ -677,6 +809,8 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
     const g = guardedNames(anc, startOffset(n), prefix);
     return g.size > 0 ? g : undefined;
   };
+  let pathMemo: BranchStep[] | undefined;
+  const pathHere = (): BranchStep[] => (pathMemo ??= branchPath(anc, startOffset(n)));
 
   if (n.kind === 'assign') {
     const left = asNode(n.left);
@@ -695,6 +829,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
           expr: n.right,
           compound: isElement || !plain,
           guarded: guardHere(),
+          path: pathHere(),
         });
         // Elementy o literalnych kluczach śledzimy osobno, żeby jeden skażony
         // element nie skażał całej tablicy przy odczycie innego klucza.
@@ -703,7 +838,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
           const innerNode = asNode(left.what);
           const key = literalKey(left.offset);
           if (innerNode && innerNode.kind === 'variable' && key !== undefined) {
-            out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: n.right, compound: !plain, key, guarded: guardHere() });
+            out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: n.right, compound: !plain, key, guarded: guardHere(), path: pathHere() });
           }
         } else if (plain && right && right.kind === 'array') {
           const items = Array.isArray(right.items) ? (right.items as unknown[]) : [];
@@ -711,7 +846,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
             const entry = asNode(it);
             const key = entry ? literalKey(entry.key) : undefined;
             if (entry && key !== undefined) {
-              out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: entry.value, compound: false, key, guarded: guardHere() });
+              out.push({ off: endOffset(n), names: [keyName(target.name, key)], expr: entry.value, compound: false, key, guarded: guardHere(), path: pathHere() });
             }
           }
         }
@@ -727,7 +862,7 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
         const key = literalKey(asNode(it)?.key);
         if (key !== undefined && /^[A-Za-z_]\w*$/.test(key)) names.push(key);
       }
-      if (names.length) out.push({ off: endOffset(n), names, expr: inner, compound: false, guarded: guardHere() });
+      if (names.length) out.push({ off: endOffset(n), names, expr: inner, compound: false, guarded: guardHere(), path: pathHere() });
     }
   } else if (n.kind === 'foreach') {
     const names: string[] = [];
@@ -737,9 +872,9 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
     for (const v of cleanKey ? [asNode(n.value)] : [keyVar, asNode(n.value)]) {
       if (v && v.kind === 'variable' && typeof v.name === 'string') names.push(v.name);
     }
-    if (names.length) out.push({ off: endOffset(asNode(n.source)), names, expr: n.source, compound: false, guarded: guardHere() });
+    if (names.length) out.push({ off: endOffset(asNode(n.source)), names, expr: n.source, compound: false, guarded: guardHere(), path: pathHere() });
     if (cleanKey && typeof keyVar?.name === 'string') {
-      out.push({ off: endOffset(asNode(n.source)), names: [keyVar.name], expr: undefined, compound: false, guarded: guardHere() });
+      out.push({ off: endOffset(asNode(n.source)), names: [keyVar.name], expr: undefined, compound: false, guarded: guardHere(), path: pathHere() });
     }
   }
 
@@ -752,9 +887,18 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
   anc.pop();
 }
 
+// Jeden zapis do zmiennej. Dla zmiennych bez klucza origin to wkład samego zapisu (wynik prawej strony),
+// a stan zmiennej w danym miejscu składa resolveOrigin. Dla elementów o literalnym kluczu origin to stan elementu.
+interface HistoryEntry {
+  off: number;
+  origin: Origin;
+  reset: boolean; // zapis zastępuje całą wartość (zwykłe przypisanie)
+  compound: boolean; // zapis dopisuje do wartości (.=, +=, $a[] = ..)
+  path: BranchStep[];
+}
+
 interface Scoped {
-  // Dla zmiennych: reset=true, gdy zdarzenie zastępuje całą wartość (zwykłe przypisanie).
-  history: Map<string, Array<{ off: number; origin: Origin; reset: boolean }>>;
+  history: Map<string, HistoryEntry[]>;
   requests: Set<string>;
 }
 
@@ -818,46 +962,52 @@ function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped 
   events.sort((a, b) => a.off - b.off);
 
   const requests = requestParams(scope);
-  const current = new Map<string, Origin>();
   const currentKeys = new Map<string, Origin>();
   const history: Scoped['history'] = new Map();
   if (spec.paramSource) {
     for (const name of untypedParams(scope)) {
-      current.set(name, 'param');
-      history.set(name, [{ off: -1, origin: 'param', reset: true }]);
+      history.set(name, [{ off: -1, origin: 'param', reset: true, compound: false, path: [] }]);
     }
   }
   for (const seed of seeds) {
-    current.set(seed.name, seed.source);
-    history.set(seed.name, [{ off: -1, origin: seed.source, reset: true }]);
+    history.set(seed.name, [{ off: -1, origin: seed.source, reset: true, compound: false, path: [] }]);
     for (const key of seed.cleanKeys ?? []) {
       const name = keyName(seed.name, key);
       currentKeys.set(name, 'none');
-      history.set(name, [{ off: -1, origin: 'none', reset: false }]);
+      history.set(name, [{ off: -1, origin: 'none', reset: false, compound: false, path: [] }]);
     }
   }
+  // Zdarzenie, które właśnie liczymy: jego prawa strona czyta zmienne tak, jak wyglądały tuż przed nim.
+  let cursorOff = 0;
+  let cursorPath: BranchStep[] = [];
+  const stateOf = (name: string): Origin => resolveOrigin(history.get(name), cursorOff, cursorPath, name);
   const env: Env = {
-    origin: (name) => current.get(name) ?? 'none',
+    origin: stateOf,
     originKey: (name, key) => currentKeys.get(keyName(name, key)),
-    isRequestVar: (name) => requests.has(name) && (current.get(name) ?? 'none') === 'none',
+    isRequestVar: (name) => requests.has(name) && stateOf(name) === 'none',
   };
   for (const ev of events) {
+    cursorOff = ev.off;
+    cursorPath = ev.path;
     const hit = evalTaint(ev.expr, spec, withGuard(env, ev.guarded));
     let incoming: Origin = 'none';
     if (hit.direct) incoming = 'superglobal';
     else if (hit.viaVar) incoming = hit.source ?? 'superglobal';
     if (incoming !== 'none' && hit.escaped) incoming = `${incoming as 'superglobal' | TaintSource}~`;
     for (const name of ev.names) {
-      const store = ev.key !== undefined ? currentKeys : current;
-      let previous = store.get(name) ?? 'none';
-      if (ev.key !== undefined && !store.has(name)) {
-        // Pierwsze przypisanie do klucza: poprzednia wartość to stan całej tablicy.
-        previous = current.get(name.slice(0, name.length - ev.key.length - 2)) ?? 'none';
+      let origin = incoming;
+      if (ev.key !== undefined) {
+        // Elementy o literalnych kluczach liczymy liniowo, bez gałęzi.
+        let previous = currentKeys.get(name);
+        if (previous === undefined) {
+          // Pierwsze przypisanie do klucza: poprzednia wartość to stan całej tablicy.
+          previous = stateOf(name.slice(0, name.length - ev.key.length - 2));
+        }
+        // Dopisanie wartości po ucieczce cudzysłowów nie zdejmuje wcześniejszego, zwykłego skażenia.
+        const keepsPrevious = ev.compound && previous !== 'none' && incoming.endsWith('~') && !previous.endsWith('~');
+        origin = keepsPrevious ? previous : incoming !== 'none' ? incoming : ev.compound ? previous : 'none';
+        currentKeys.set(name, origin);
       }
-      // Dopisanie wartości po ucieczce cudzysłowów nie zdejmuje wcześniejszego, zwykłego skażenia.
-      const keepsPrevious = ev.compound && previous !== 'none' && incoming.endsWith('~') && !previous.endsWith('~');
-      const origin = keepsPrevious ? previous : incoming !== 'none' ? incoming : ev.compound ? previous : 'none';
-      store.set(name, origin);
       const reset = ev.key === undefined && !ev.compound;
       if (reset) {
         // Nowa wartość całej zmiennej unieważnia znane elementy.
@@ -865,20 +1015,45 @@ function buildScope(scope: AnyNode, spec: TaintSpec, seeds: Seeds = []): Scoped 
         for (const k of [...currentKeys.keys()]) if (k.startsWith(prefix)) currentKeys.delete(k);
       }
       const list = history.get(name) ?? [];
-      list.push({ off: ev.off, origin, reset });
+      list.push({ off: ev.off, origin, reset, compound: ev.compound, path: ev.path });
       history.set(name, list);
     }
   }
   return { history, requests };
 }
 
-function originAt(scoped: Scoped, name: string, off: number): Origin {
-  const list = scoped.history.get(name);
-  if (!list) return 'none';
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i].off <= off) return list[i].origin;
+// Czy ścieżka path zaczyna się od ścieżki prefix, czyli leży w tej samej gałęzi albo głębiej.
+function startsWith(path: BranchStep[], prefix: BranchStep[]): boolean {
+  if (prefix.length > path.length) return false;
+  for (let i = 0; i < prefix.length; i++) {
+    if (prefix[i].construct !== path[i].construct || prefix[i].branch !== path[i].branch) return false;
   }
-  return 'none';
+  return true;
+}
+
+// Stan zmiennej w miejscu off i gałęzi path. Idziemy od najnowszego zapisu wstecz. Zapis, który wykonuje się przed
+// każdym ujściem i zastępuje wartość, zamyka przeszukiwanie. Zapis w innej gałęzi tej samej konstrukcji pomijamy.
+// Zapis w gałęzi, która może się nie wykonać, i zapis dopisujący łączą się z tym, co było wcześniej. Pełny zapis
+// w gałęzi nadpisuje wszystko, co ta gałąź zapisała wcześniej, zanim się skończy, więc starsze zapisy z tej samej
+// gałęzi (i z gałęzi w niej zagnieżdżonych) nie docierają do ujścia za gałęzią.
+function resolveOrigin(list: HistoryEntry[] | undefined, off: number, path: BranchStep[], name: string): Origin {
+  if (!list) return 'none';
+  let acc: Origin = 'none';
+  const overwritten: BranchStep[][] = [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const e = list[i];
+    if (e.off > off) continue;
+    const rel = relate(e.path, path, name);
+    if (rel === 'exclusive') continue;
+    if (overwritten.some((branch) => startsWith(e.path, branch))) continue;
+    acc = joinOrigin(acc, e.origin);
+    // Zwykłe skażenie nie zmieni się już od starszych zapisów.
+    if (acc !== 'none' && !acc.endsWith('~')) return acc;
+    if (!e.reset) continue;
+    if (rel === 'dominates') return acc;
+    overwritten.push(e.path);
+  }
+  return acc;
 }
 
 // Skażenie elementu o literalnym kluczu w danym miejscu kodu. undefined, gdy
@@ -981,13 +1156,15 @@ export class TaintAnalyzer {
     const s = scoped;
     // Przodkowie od zakresu w dół, bo sprawdzenie poza funkcją niczego w niej nie potwierdza.
     const from = stack.lastIndexOf(scope as PhpNode);
-    const guarded = guardedNames(from >= 0 ? stack.slice(from) : stack, off, this.spec.prefixGuards);
+    const ancestors = from >= 0 ? stack.slice(from) : stack;
+    const guarded = guardedNames(ancestors, off, this.spec.prefixGuards);
+    const sinkPath = branchPath(ancestors, off);
     const hit = evalTaint(
       expr,
       this.spec,
       withGuard(
         {
-          origin: (name) => originAt(s, name, off),
+          origin: (name) => resolveOrigin(s.history.get(name), off, sinkPath, name),
           originKey: (name, key) => originKeyAt(s, name, key, off),
           // Zmienna żądania traci ten status po nadpisaniu przez przypisanie.
           isRequestVar: (name) => s.requests.has(name) && !s.history.has(name),
