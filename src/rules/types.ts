@@ -48,6 +48,7 @@ export interface Finding {
   asvs?: string[]; // np. ['5.3.4']
   fix?: string; // krótka wskazówka naprawy, w języku skanu
   patch?: Patch; // konkretna zmiana kodu, gdy da się ją wyliczyć i zweryfikować
+  fingerprint?: string; // odcisk stabilny mimo przesunięć linii, ustawia silnik po skanie
 }
 
 // Węzeł AST z php-parser. Trzymamy luźny typ, bo biblioteka nie daje pełnych typów.

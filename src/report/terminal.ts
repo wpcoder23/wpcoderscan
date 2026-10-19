@@ -42,6 +42,10 @@ export function renderTerminal(r: ScanResult, opts: TerminalOptions = {}): strin
   out.push('');
   out.push(c(C.bold, t('report.title', { target: r.target })));
   out.push(c(C.gray, t('report.counts', { files: r.filesScanned, findings: r.findings.length })));
+  const notes: string[] = [];
+  if (r.suppressed?.length) notes.push(t('report.suppressed', { count: r.suppressed.length }));
+  if (r.baselined) notes.push(t('report.baselined', { count: r.baselined }));
+  if (notes.length > 0) out.push(c(C.gray, notes.join(', ')));
   out.push('');
 
   for (const f of r.findings) {
@@ -74,6 +78,17 @@ export function renderTerminal(r: ScanResult, opts: TerminalOptions = {}): strin
     out.push('');
     out.push(c(C.gray, t('report.errors', { count: r.errors.length })));
     for (const e of r.errors) out.push(c(C.gray, `  ${e.file}: ${e.message}`));
+  }
+
+  if (r.warnings?.length) {
+    out.push('');
+    out.push(c(C.gray, t('report.warnings', { count: r.warnings.length })));
+    for (const w of r.warnings) out.push(c(C.gray, `  ${w.file}:${w.line}: ${w.message}`));
+  }
+
+  if (r.staleBaseline) {
+    out.push('');
+    out.push(c(C.gray, t('report.staleBaseline', { count: r.staleBaseline })));
   }
 
   const withPatch = r.findings.filter((f) => f.patch).length;

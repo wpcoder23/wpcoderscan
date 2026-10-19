@@ -203,6 +203,26 @@ export const en = {
   'report.count.low': 'low {n}',
   'report.errors': 'scanner errors: {count}',
   'report.patchHint': 'fix suggestions: {count} (show them with --suggest)',
+  'report.suppressed': 'suppressed by comments: {count}',
+  'report.baselined': 'in baseline: {count}',
+  'report.warnings': 'warnings: {count}',
+  'report.staleBaseline': 'baseline entries without a match: {count} (refresh the file with --write-baseline)',
+
+  // Komentarze wyciszające, plik ustawień i baseline.
+  'warn.ignoreNoRule': 'wpcoderscan-ignore needs a rule id, so the comment was ignored',
+  'warn.ignoreUnknownRule': 'wpcoderscan-ignore: "{rule}" matches no rule',
+  'config.notFound': 'config file not found: {file}',
+  'config.invalid': 'cannot use config file {file}: {detail}',
+  'config.expectedObject': 'the top level must be a JSON object',
+  'config.unknownKey': '{file}: unknown option "{key}"',
+  'config.badType': '{file}: option "{key}" has the wrong type, expected {expected}',
+  'config.badRuleValue': '{file}: rule "{rule}" in "rules" can only be set to "off"',
+  'config.unknownRule': '{file}: "rules" lists "{rule}", which is not a rule',
+  'config.badLang': '{file}: unknown language "{value}" in "lang", supported languages: {supported}',
+  'config.using': 'using config {file}',
+  'baseline.notFound': 'baseline file not found: {file}',
+  'baseline.invalid': 'the baseline file is not valid. Create it again with --write-baseline',
+  'baseline.saved': 'Baseline saved to {file}: {count} findings. From now on only new findings are reported.',
 
   // CLI.
   'cli.help': `WPCoderScan - security scanner for WordPress and PHP code
@@ -222,6 +242,14 @@ Options:
   --extended          include extended rules (higher sensitivity, more false alarms)
   --suggest           show fix suggestions next to findings (writes nothing)
   --patch <file>      write complete fix suggestions as a patch for git apply
+  --baseline <file>   hide the findings listed in a baseline file, report only new ones
+  --write-baseline <file>
+                      save the current findings as a baseline and exit with code 0
+  --config <file>     read settings from a file
+                      (default: .wpcoderscan.json in the current directory)
+  --no-config         do not read the settings file
+  --no-ignore-comments
+                      do not honor wpcoderscan-ignore comments in the scanned code
   --lang <en|pl>      output language (default en; also env WPCODERSCAN_LANG)
   -v, --version       show the version
   -h, --help          this help
@@ -231,6 +259,9 @@ Options:
   'cli.patch.saved': 'Patch saved to {file}: {patches} fixes in {files} files.',
   'cli.patch.apply': 'Review it and apply it: git apply --check {file} && git apply {file}',
   'cli.patch.manual': 'Skipped {count} suggestions that need a decision. See them with --suggest.',
+  'cli.warning': 'warning: {message}',
+  'cli.missingValue': 'option {option} needs a value',
+  'cli.baselineDiff': '--write-baseline cannot be combined with --diff, because the baseline would cover only the changed files',
   'cli.badFailOn': 'unknown --fail-on level "{value}", use critical, high, medium, low or none',
 } as const;
 

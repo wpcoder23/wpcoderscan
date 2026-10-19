@@ -3,11 +3,11 @@
 // Security. Mapujemy poziom i pewność na poziom SARIF tak, żeby heurystyka
 // nigdy nie była błędem (error), bo domyślnie nie łamie build. Dzięki temu
 // zakładka Security zgadza się z zachowaniem CI.
-import { createHash } from 'node:crypto';
 import { createTranslator } from '../i18n';
 import { allRules, extendedRules } from '../rules';
-import type { Confidence, Finding, Severity } from '../rules/types';
+import type { Confidence, Severity } from '../rules/types';
 import type { ScanResult } from '../engine';
+import { baseFingerprint } from '../engine/fingerprint';
 import { VERSION } from '../version';
 
 const TOOL_NAME = 'WPCoderScan';
@@ -71,6 +71,7 @@ interface SarifRun {
     };
   };
   results: SarifResult[];
+  properties?: Record<string, number>;
 }
 
 export interface SarifLog {
@@ -111,14 +112,6 @@ function tags(cwe?: string[], asvs?: string[]): string[] {
   if (cwe) t.push(...cwe);
   if (asvs) t.push(...asvs.map((a) => `ASVS-${a}`));
   return t;
-}
-
-// Odcisk stabilny mimo przesunięć linii, żeby GitHub nie mnożył alertów.
-function fingerprint(f: Finding): string {
-  return createHash('sha256')
-    .update(`${f.ruleId}\n${f.file}\n${f.snippet ?? ''}`)
-    .digest('hex')
-    .slice(0, 16);
 }
 
 export function buildSarif(result: ScanResult): SarifLog {
@@ -168,7 +161,7 @@ export function buildSarif(result: ScanResult): SarifLog {
         ...(f.asvs ? { asvs: f.asvs } : {}),
         ...(f.fix ? { fix: f.fix } : {}),
       },
-      partialFingerprints: { wpcsFingerprint: fingerprint(f) },
+      partialFingerprints: { wpcsFingerprint: f.fingerprint ?? baseFingerprint(f) },
     };
 
     if (f.patch) {
@@ -194,6 +187,12 @@ export function buildSarif(result: ScanResult): SarifLog {
     return res;
   });
 
+  // GitHub nie honoruje pola suppressions, więc wyciszone znaleziska nie trafiają do wyników.
+  // Ich liczby zostają we właściwościach przebiegu, żeby było widać, że coś wyciszono.
+  const counts: Record<string, number> = {};
+  if (result.suppressed?.length) counts.suppressedByComments = result.suppressed.length;
+  if (result.baselined) counts.baselined = result.baselined;
+
   return {
     $schema: SARIF_SCHEMA,
     version: '2.1.0',
@@ -208,6 +207,7 @@ export function buildSarif(result: ScanResult): SarifLog {
           },
         },
         results,
+        ...(Object.keys(counts).length > 0 ? { properties: counts } : {}),
       },
     ],
   };

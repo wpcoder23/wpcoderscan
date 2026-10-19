@@ -58,6 +58,7 @@ for (const p of plugins) {
       slug: p.slug,
       version: p.version,
       files: r.filesScanned,
+      errors: r.errors?.length ?? 0,
       findings: r.findings.map((f) => ({ rule: f.ruleId, conf: f.confidence, sev: f.severity, file: f.file, line: f.line, msg: f.message.slice(0, 160) })),
     });
   } catch (e) {

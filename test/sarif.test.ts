@@ -30,7 +30,7 @@ describe('raport SARIF', () => {
       expect(loc.artifactLocation.uri.length).toBeGreaterThan(0);
       expect(loc.artifactLocation.uri).not.toContain('\\');
       expect(loc.region.startLine).toBeGreaterThanOrEqual(1);
-      expect(res.partialFingerprints.wpcsFingerprint).toMatch(/^[0-9a-f]{16}$/);
+      expect(res.partialFingerprints.wpcsFingerprint).toMatch(/^[0-9a-f]{16}(:\d+)?$/);
       if (res.ruleIndex !== undefined) {
         expect(run.tool.driver.rules[res.ruleIndex].id).toBe(res.ruleId);
       }

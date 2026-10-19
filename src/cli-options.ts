@@ -8,13 +8,19 @@ export interface Args {
   target: string;
   json: boolean;
   sarif: boolean;
-  failOn: string;
+  failOn: string | null; // null, gdy nie podano flagi. Wtedy decyduje plik ustawień, a na końcu 'high'
   strict: boolean;
   diff: string | null;
   suggest: boolean;
   extended: boolean;
   patch: string | null;
   lang: string | null;
+  config: string | null;
+  noConfig: boolean;
+  baseline: string | null;
+  writeBaseline: string | null;
+  noIgnoreComments: boolean;
+  missingValue: string | null; // pierwsza opcja z obowiązkową wartością, której zabrakło
   help: boolean;
   version: boolean;
 }
@@ -27,29 +33,56 @@ export function parseArgs(argv: string[]): Args {
     target: '',
     json: false,
     sarif: false,
-    failOn: 'high',
+    failOn: null,
     strict: false,
     diff: null,
     suggest: false,
     extended: false,
     patch: null,
     lang: null,
+    config: null,
+    noConfig: false,
+    baseline: null,
+    writeBaseline: null,
+    noIgnoreComments: false,
+    missingValue: null,
     help: false,
     version: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    // Opcje z obowiązkową wartością: --flaga wartość albo --flaga=wartość. Brak wartości
+    // zapamiętujemy, a błąd zgłasza cli.ts, gdy język komunikatów jest już wybrany.
+    const takeValue = (flag: string): string | null => {
+      let value: string | undefined;
+      if (a.startsWith(`${flag}=`)) {
+        value = a.slice(flag.length + 1);
+      } else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) {
+        value = argv[++i];
+      }
+      if (!value) {
+        if (args.missingValue === null) args.missingValue = flag;
+        return null;
+      }
+      return value;
+    };
     if (a === '--json') args.json = true;
     else if (a === '--sarif') args.sarif = true;
     else if (a === '--strict') args.strict = true;
     else if (a === '--suggest') args.suggest = true;
     else if (a === '--extended') args.extended = true;
+    else if (a === '--no-config') args.noConfig = true;
+    else if (a === '--no-ignore-comments') args.noIgnoreComments = true;
+    else if (a === '--config' || a.startsWith('--config=')) args.config = takeValue('--config');
+    else if (a === '--baseline' || a.startsWith('--baseline=')) args.baseline = takeValue('--baseline');
+    else if (a === '--write-baseline' || a.startsWith('--write-baseline=')) args.writeBaseline = takeValue('--write-baseline');
     else if (a === '--patch') args.patch = argv[++i] ?? null;
     else if (a === '--lang') args.lang = argv[++i] ?? '';
     else if (a.startsWith('--lang=')) args.lang = a.slice('--lang='.length);
     else if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--version' || a === '-v') args.version = true;
     else if (a === '--fail-on') args.failOn = argv[++i] ?? 'high';
+    else if (a.startsWith('--fail-on=')) args.failOn = a.slice('--fail-on='.length);
     else if (a === '--diff') args.diff = argv[++i] ?? 'HEAD';
     else if (!a.startsWith('-') && !args.target) args.target = a;
   }

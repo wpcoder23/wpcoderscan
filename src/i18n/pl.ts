@@ -203,6 +203,26 @@ export const pl: Record<MessageKey, string> = {
   'report.count.low': 'niskie {n}',
   'report.errors': 'błędy skanera: {count}',
   'report.patchHint': 'podpowiedzi napraw: {count} (pokaż je opcją --suggest)',
+  'report.suppressed': 'wyciszone komentarzem: {count}',
+  'report.baselined': 'w baseline: {count}',
+  'report.warnings': 'ostrzeżenia: {count}',
+  'report.staleBaseline': 'wpisy baseline bez dopasowania: {count} (odśwież plik opcją --write-baseline)',
+
+  // Komentarze wyciszające, plik ustawień i baseline.
+  'warn.ignoreNoRule': 'wpcoderscan-ignore wymaga identyfikatora reguły, komentarz pominięto',
+  'warn.ignoreUnknownRule': 'wpcoderscan-ignore: "{rule}" nie pasuje do żadnej reguły',
+  'config.notFound': 'nie znaleziono pliku ustawień: {file}',
+  'config.invalid': 'nie da się użyć pliku ustawień {file}: {detail}',
+  'config.expectedObject': 'na najwyższym poziomie musi być obiekt JSON',
+  'config.unknownKey': '{file}: nieznana opcja "{key}"',
+  'config.badType': '{file}: opcja "{key}" ma zły typ, oczekiwano {expected}',
+  'config.badRuleValue': '{file}: reguła "{rule}" w "rules" może mieć tylko wartość "off"',
+  'config.unknownRule': '{file}: "rules" wymienia "{rule}", a to nie jest reguła',
+  'config.badLang': '{file}: nieznany język "{value}" w "lang", obsługiwane języki: {supported}',
+  'config.using': 'używam ustawień z {file}',
+  'baseline.notFound': 'nie znaleziono pliku baseline: {file}',
+  'baseline.invalid': 'plik baseline jest nieprawidłowy. Utwórz go ponownie opcją --write-baseline',
+  'baseline.saved': 'Zapisano baseline w {file}: znalezisk {count}. Od teraz zgłaszamy tylko nowe znaleziska.',
 
   // CLI.
   'cli.help': `WPCoderScan - skaner bezpieczeństwa kodu WordPress i PHP
@@ -222,6 +242,14 @@ Opcje:
   --extended          dołącz reguły rozszerzone (większa czułość, więcej fałszywych alarmów)
   --suggest           pokaż podpowiedzi napraw przy znaleziskach (nic nie zapisuje)
   --patch <plik>      zapisz pełne podpowiedzi napraw jako łatkę do git apply
+  --baseline <plik>   ukryj znaleziska zapisane w baseline, zgłaszaj tylko nowe
+  --write-baseline <plik>
+                      zapisz bieżące znaleziska jako baseline i zakończ kodem 0
+  --config <plik>     wczytaj ustawienia z pliku
+                      (domyślnie .wpcoderscan.json w bieżącym katalogu)
+  --no-config         nie czytaj pliku ustawień
+  --no-ignore-comments
+                      nie honoruj komentarzy wpcoderscan-ignore w skanowanym kodzie
   --lang <en|pl>      język wyjścia (domyślnie en; także zmienna WPCODERSCAN_LANG)
   -v, --version       pokaż wersję
   -h, --help          ta pomoc
@@ -231,5 +259,8 @@ Opcje:
   'cli.patch.saved': 'Zapisano łatkę {file}: poprawek {patches}, plików {files}.',
   'cli.patch.apply': 'Sprawdź ją i zastosuj: git apply --check {file} && git apply {file}',
   'cli.patch.manual': 'Pominięto {count} podpowiedzi do decyzji. Zobacz je opcją --suggest.',
+  'cli.warning': 'ostrzeżenie: {message}',
+  'cli.missingValue': 'opcja {option} wymaga wartości',
+  'cli.baselineDiff': '--write-baseline nie działa razem z --diff, bo baseline objąłby tylko zmienione pliki',
   'cli.badFailOn': 'nieznany poziom --fail-on "{value}", użyj critical, high, medium, low albo none',
 };
