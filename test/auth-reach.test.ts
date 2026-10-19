@@ -407,7 +407,7 @@ class Cache {
 		wp_send_json_success();
 	}
 	private function clear_cache() {
-		delete_transient( 'view_cache' );
+		update_option( 'view_cache_ttl', 5 );
 	}
 }`);
     expect(f).toHaveLength(0);
@@ -417,7 +417,7 @@ class Cache {
     const f = await auth(`<?php
 add_action( 'wp_ajax_refresh_view', 'refresh_view' );
 function refresh_view() {
-	delete_transient( 'view_cache' );
+	update_option( 'view_cache_ttl', 5 );
 	wp_send_json_success();
 }`);
     expect(f).toHaveLength(2);
