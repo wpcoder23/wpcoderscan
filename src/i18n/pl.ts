@@ -56,6 +56,10 @@ export const pl: Record<MessageKey, string> = {
     'Opakuj dane funkcją ucieczki zależną od kontekstu: esc_html w treści, esc_attr w atrybucie, esc_url w adresie. Dla HTML z tagami użyj wp_kses_post.',
   'xss.direct': 'Dane {origin} trafiają do {sink} bez funkcji ucieczki. Grozi {kind}.',
   'xss.viaVar': 'Zmienna {var} zawiera dane {origin} i trafia do {sink} bez funkcji ucieczki. Możliwy {kind}.',
+  'xss.textOnly':
+    'Dane {origin} trafiają do {sink} w atrybucie HTML, znaczniku albo skrypcie po funkcji, która tylko usuwa znaczniki. Cudzysłowy zostają w wartości, więc może ona wyjść poza atrybut. Grozi {kind}.',
+  'xss.textOnly.viaVar':
+    'Zmienna {var} zawiera dane {origin} i trafia do {sink} w atrybucie HTML, znaczniku albo skrypcie po funkcji, która tylko usuwa znaczniki. Cudzysłowy zostają w wartości, więc może ona wyjść poza atrybut. Możliwy {kind}.',
   'xss.risk.stored': 'zapisanym XSS',
   'xss.risk.reflected': 'odbitym XSS',
   'xss.possible.stored': 'zapisany XSS',

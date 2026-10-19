@@ -56,6 +56,10 @@ export const en = {
     'Wrap the data in an escaping function that matches the context: esc_html in content, esc_attr in an attribute, esc_url in a URL. For HTML with tags use wp_kses_post.',
   'xss.direct': 'Data {origin} reaches {sink} without an escaping function. Risk of {kind}.',
   'xss.viaVar': 'Variable {var} holds data {origin} and reaches {sink} without an escaping function. Possible {kind}.',
+  'xss.textOnly':
+    'Data {origin} reaches {sink} inside an HTML attribute, a tag or a script after a function that only strips tags. Quotes stay in the value, so it can break out. Risk of {kind}.',
+  'xss.textOnly.viaVar':
+    'Variable {var} holds data {origin} and reaches {sink} inside an HTML attribute, a tag or a script after a function that only strips tags. Quotes stay in the value, so it can break out. Possible {kind}.',
   'xss.risk.stored': 'stored XSS',
   'xss.risk.reflected': 'reflected XSS',
   'xss.possible.stored': 'stored XSS',

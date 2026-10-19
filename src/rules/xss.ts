@@ -2,13 +2,16 @@
 // Dane śledzimy lekką analizą skażenia (taint.ts). Zgłaszamy superglobal
 // trafiający do echo albo print bez funkcji ucieczki, sanitizacji ani
 // rzutowania liczbowego, a także zmienną wcześniej zasilona takimi danymi.
+// Funkcje, które tylko usuwają znaczniki (sanitize_text_field, strip_tags), wystarczają w treści strony.
+// W atrybucie, znaczniku i skrypcie nie, bo zostawiają cudzysłowy, więc tam ocenia to kontekst HTML.
 // To heurystyka, więc domyślnie tylko ostrzega i nie łamie build.
-import { buildXssPatch } from '../fix/xss-patch';
+import { textSanitizerExposure } from '../fix/xss-context';
+import { buildXssPatch, flattenConcat, outputBefore } from '../fix/xss-patch';
 import { walk } from '../parser';
 import { asNode, baseVariable, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
 import { linkCallers } from './callers';
 import { findShortcodeHandlers, returnsArray } from './shortcodes';
-import { chainParts, literalString, originText, TaintAnalyzer, viaText, XSS_SPEC } from './taint';
+import { chainParts, literalString, originText, TaintAnalyzer, viaText, XSS_SPEC, type TaintHit } from './taint';
 import type { MessageKey } from '../i18n';
 import type { Finding, FileContext, Patch, PhpNode, Rule, Severity } from './types';
 
@@ -99,12 +102,35 @@ export const xssEchoRule: Rule = {
       });
     };
 
+    // Wartość po funkcji, która tylko usuwa znaczniki, i bez żadnego HTML w samym wyrażeniu. Czy stoi w atrybucie,
+    // znaczniku albo skrypcie, widać dopiero po tekście wypisanym wcześniej. Bez znanego tekstu nie zgłaszamy.
+    const exposedAfterSanitizer = (expr: unknown, stmt: AnyNode, exprIndex: number, stack: PhpNode[]): TaintHit | undefined => {
+      const node = asNode(expr);
+      if (!node || (stmt.kind !== 'echo' && stmt.kind !== 'print')) return undefined;
+      const ops = flattenConcat(node);
+      for (let k = 0; k < ops.length; k++) {
+        const h = taint.analyze(ops[k], stack, undefined, true);
+        if (!h.escaped) continue;
+        const before = outputBefore(stmt, stack, exprIndex, ops, k);
+        if (before.opaque || !before.literal) continue;
+        if (textSanitizerExposure(before.text) === 'exposed') {
+          return { direct: h.direct, viaVar: h.viaVar, via: h.via, source: h.source, unquoted: true };
+        }
+      }
+      return undefined;
+    };
+
     // sink to ujście, którego nazwa trafia do komunikatu. Podpowiedź naprawy budujemy tylko dla echo i print.
     const check = (expr: unknown, stmt: AnyNode, exprIndex: number, stack: PhpNode[], sink: Sink = 'echo') => {
       // Odpowiedzi JSON w die, wp_die i printf to zwykle AJAX, nie HTML.
       const call = asNode(expr);
       if (sink !== 'echo' && call && ['json_encode', 'wp_json_encode'].includes(calledName(call) ?? '')) return;
-      const hit = taint.analyze(expr, stack);
+      let hit = taint.analyze(expr, stack, undefined, true);
+      if (hit.escaped) {
+        const exposed = exposedAfterSanitizer(expr, stmt, exprIndex, stack);
+        if (!exposed) return;
+        hit = exposed;
+      }
       const at = asNode(expr) ?? stmt;
       const exprNode = asNode(expr);
       const patch = exprNode && (stmt.kind === 'echo' || stmt.kind === 'print')
@@ -113,8 +139,8 @@ export const xssEchoRule: Rule = {
       if (hit.direct) {
         report(
           at,
-          hit.source || INFERRED_SINKS.has(sink) ? 'medium' : 'high',
-          ctx.t('xss.direct', {
+          hit.source || hit.unquoted || INFERRED_SINKS.has(sink) ? 'medium' : 'high',
+          ctx.t(hit.unquoted ? 'xss.textOnly' : 'xss.direct', {
             origin: originText(hit, ctx.t),
             sink: ctx.t(SINK_KEY[sink]),
             kind: ctx.t(isStored(hit) ? 'xss.risk.stored' : 'xss.risk.reflected'),
@@ -125,7 +151,7 @@ export const xssEchoRule: Rule = {
         report(
           at,
           'medium',
-          ctx.t('xss.viaVar', {
+          ctx.t(hit.unquoted ? 'xss.textOnly.viaVar' : 'xss.viaVar', {
             var: viaText(hit),
             origin: originText(hit, ctx.t),
             sink: ctx.t(SINK_KEY[sink]),

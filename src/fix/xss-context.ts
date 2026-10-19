@@ -26,7 +26,15 @@ const NAME_CHAR = /[A-Za-z0-9:_.-]/;
 const LETTER = /[A-Za-z]/;
 const SPACE = /\s/;
 
-export function contextAt(prefix: string): XssContext {
+interface Scan {
+  state: State;
+  rawTag: string; // nazwa znacznika script albo style, gdy state to 'rawtext'
+  attr: string;
+  valueLen: number;
+}
+
+// Przebieg automatu po tekście sprzed miejsca wypisania danych.
+function scan(prefix: string): Scan {
   let state: State = 'text';
   let tag = '';
   let closing = false;
@@ -128,10 +136,25 @@ export function contextAt(prefix: string): XssContext {
     }
   }
 
+  return { state, rawTag, attr, valueLen };
+}
+
+export function contextAt(prefix: string): XssContext {
+  const { state, attr, valueLen } = scan(prefix);
   if (state === 'text') return { kind: 'text' };
   if (state === 'valuedq') return { kind: 'attr', quote: '"', name: attr, atStart: valueLen === 0 };
   if (state === 'valuesq') return { kind: 'attr', quote: "'", name: attr, atStart: valueLen === 0 };
   return { kind: 'unsafe' };
+}
+
+// Funkcje takie jak sanitize_text_field i strip_tags usuwają znaczniki, ale zostawiają cudzysłowy i nawiasy
+// w tekście. W treści strony to wystarcza. W atrybucie, w znaczniku i w skrypcie wartość wychodzi poza swoje miejsce.
+// Komentarz i styl uznajemy za bezpieczne, bo bez znaczników nie da się z nich wyjść do wykonania kodu.
+export function textSanitizerExposure(prefix: string): 'covered' | 'exposed' {
+  const { state, rawTag } = scan(prefix);
+  if (state === 'text' || state === 'comment') return 'covered';
+  if (state === 'rawtext') return rawTag === 'script' ? 'exposed' : 'covered';
+  return 'exposed';
 }
 
 // Atrybuty, których wartość jest adresem URL.

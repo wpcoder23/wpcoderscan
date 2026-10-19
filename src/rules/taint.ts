@@ -7,6 +7,7 @@
 // użytkownika fałszywymi alarmami. Przepływ przez wywołania funkcji z tego
 // samego pliku dokłada callers.ts, przez zasianie parametrów (seed).
 import { asNode, baseVariable, calledName, offsetName, SUPERGLOBALS, type AnyNode } from './ast-utils';
+import { textSanitizerExposure } from '../fix/xss-context';
 import { confirmedBy, confirmedByNegation, elementPath, guardedNames } from './guards';
 import type { Translate } from '../i18n';
 import type { PhpNode } from './types';
@@ -19,9 +20,14 @@ export interface TaintHit {
   // Całe skażenie przeszło przez funkcję ucieczki cudzysłowów (esc_sql, addslashes). Chroni ona wartość
   // ujętą w cudzysłowy zapytania, więc takie trafienie uznajemy za czyste, dopóki nie trafi poza cudzysłów.
   escaped?: boolean;
-  // Wartość po ucieczce cudzysłowów stoi w zapytaniu poza cudzysłowem (liczba, kolumna, ORDER BY).
+  // Wartość po ucieczce stoi tam, gdzie ucieczka jej nie chroni. W zapytaniu to miejsce poza cudzysłowem
+  // (liczba, kolumna, ORDER BY). W HTML to atrybut, znacznik albo skrypt po funkcji, która tylko usuwa znaczniki.
   unquoted?: boolean;
 }
+
+// Ocena miejsca, w którym stoi wartość po ucieczce. covered: ucieczka tu wystarcza. exposed: nie wystarcza.
+// unknown: z tekstu przed wartością nie widać kontekstu, więc rozstrzyga tekst wokół całego wyrażenia.
+export type EscapeVerdict = 'covered' | 'exposed' | 'unknown';
 
 // request: obiekt żądania REST. url: add_query_arg bez adresu, czyli bieżący adres strony.
 // param: parametr funkcji (tylko w trybie rozszerzonym).
@@ -50,6 +56,9 @@ export interface TaintSpec {
   // Funkcje ucieczki cudzysłowów (esc_sql, addslashes). Chronią wartość wstawioną w cudzysłowy zapytania,
   // ale nie liczbę, nazwę kolumny ani kierunek sortowania wklejone bez cudzysłowu.
   escapers?: ReadonlySet<string>;
+  // Ocena miejsca wartości po ucieczce na podstawie literałów przed nią. Domyślnie sprawdzamy cudzysłowy
+  // zapytania SQL. Dla XSS ocenia to kontekst HTML.
+  escapeContext?: (before: string) => EscapeVerdict;
   // add_query_arg i remove_query_arg bez adresu zwracają bieżący adres strony,
   // który kontroluje atakujący. Dla XSS to źródło danych.
   queryArgSource?: boolean;
@@ -262,10 +271,34 @@ const XSS_CLEAN = [
   'esc_html', 'esc_attr', 'esc_url', 'esc_url_raw', 'esc_js', 'esc_textarea',
   'esc_html__', 'esc_html_e', 'esc_html_x', 'esc_attr__', 'esc_attr_e', 'esc_attr_x',
   'wp_kses', 'wp_kses_post', 'wp_kses_data',
-  'sanitize_text_field', 'sanitize_textarea_field', 'sanitize_email', 'sanitize_key', 'wc_clean',
-  'sanitize_title', 'sanitize_user', 'sanitize_file_name', 'sanitize_html_class',
+  'sanitize_email', 'sanitize_key', 'sanitize_title', 'sanitize_file_name', 'sanitize_html_class',
   'wp_json_encode', 'htmlspecialchars', 'htmlentities',
 ];
+
+// Funkcje, które usuwają znaczniki, ale zostawiają cudzysłowy i nawiasy w tekście. W treści strony wartość po
+// nich jest bezpieczna. W atrybucie, w znaczniku i w skrypcie nie, bo cudzysłów wyprowadza ją z atrybutu.
+// strip_tags z drugim argumentem (lista dozwolonych znaczników) zostaje przenoszeniem skażenia, bo dozwolony
+// znacznik może nieść atrybut z kodem.
+const XSS_TEXT_SANITIZERS = [
+  'sanitize_text_field', 'sanitize_textarea_field', 'wc_clean', 'sanitize_user', 'strip_tags', 'wp_strip_all_tags',
+];
+
+// Funkcje, które z zakodowanego tekstu odtwarzają znaki specjalne. Po nich ucieczka przestaje obowiązywać.
+const DECODERS = new Set([
+  'html_entity_decode', 'htmlspecialchars_decode', 'wp_specialchars_decode',
+  'urldecode', 'rawurldecode', 'base64_decode',
+]);
+
+// Kontekst HTML przed wartością po funkcji usuwającej znaczniki. Bez znaków < i > w literałach nie widać,
+// czy stoimy w treści, czy w atrybucie, więc ocenę zostawiamy tekstowi wokół całego wyrażenia.
+function htmlEscapeVerdict(before: string): EscapeVerdict {
+  if (!/[<>]/.test(before)) return 'unknown';
+  return textSanitizerExposure(before) === 'exposed' ? 'exposed' : 'covered';
+}
+
+function sqlEscapeVerdict(before: string): EscapeVerdict {
+  return insideQuotes(before) ? 'covered' : 'exposed';
+}
 
 // Kod wykonywany przez eval: czyści tylko to, co daje liczbę albo skrót.
 export const CODE_SPEC: TaintSpec = { clean: new Set(COMMON_CLEAN) };
@@ -279,7 +312,13 @@ export const SQL_SPEC: TaintSpec = {
 export const SQL_PARAM_SPEC: TaintSpec = { ...SQL_SPEC, paramSource: true };
 export const INCLUDE_SPEC: TaintSpec = { clean: new Set(INCLUDE_CLEAN) };
 export const EXEC_SPEC: TaintSpec = { clean: new Set(EXEC_CLEAN) };
-export const XSS_SPEC: TaintSpec = { clean: new Set(XSS_CLEAN), queryArgSource: true, extraPassthrough: URL_BUILDERS };
+export const XSS_SPEC: TaintSpec = {
+  clean: new Set(XSS_CLEAN),
+  escapers: new Set(XSS_TEXT_SANITIZERS),
+  escapeContext: htmlEscapeVerdict,
+  queryArgSource: true,
+  extraPassthrough: URL_BUILDERS,
+};
 
 // Ścieżka pliku: basename i sanitize_file_name zostawiają z nazwy tylko jej ostatni człon, więc nie da się
 // wyjść poza katalog. Wynik wp_unique_filename też jest oczyszczoną nazwą.
@@ -335,6 +374,11 @@ function merge(a: TaintHit, b: TaintHit): TaintHit {
 // Skażenie, które przeszło przez funkcję ucieczki cudzysłowów.
 function escapedHit(inner: TaintHit): TaintHit {
   return inner.direct || inner.viaVar ? { ...inner, escaped: true } : NONE;
+}
+
+// Skażenie bez śladu ucieczki.
+function unescaped(h: TaintHit): TaintHit {
+  return { direct: h.direct, viaVar: h.viaVar, ...(h.via !== undefined ? { via: h.via } : {}), ...(h.source !== undefined ? { source: h.source } : {}) };
 }
 
 // Czy tekst zapytania kończy się w środku literału tekstowego. Backtick oznacza identyfikator, który esc_sql
@@ -498,7 +542,7 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
         if (spec.clean.has(name)) return NONE;
         const args = Array.isArray(n.arguments) ? (n.arguments as unknown[]) : [];
         if (spec.pathSanitizer && name === 'preg_replace' && stripsPathSeparators(args[0], args[1])) return NONE;
-        if (spec.escapers?.has(name)) return escapedHit(evalTaint(args[0], spec, env));
+        if (spec.escapers?.has(name) && !(name === 'strip_tags' && args.length > 1)) return escapedHit(evalTaint(args[0], spec, env));
         if (isRawInputCall(name, args)) return { direct: true, viaVar: false };
         if (spec.queryArgSource && queryArgWithoutUrl(name, args)) {
           const inner = evalTaint(args, spec, env);
@@ -514,7 +558,11 @@ function evalTaint(node: unknown, spec: TaintSpec, env: Env): TaintHit {
           const fn = literalString(args[1]);
           if (fn !== undefined && spec.clean.has(fn.toLowerCase())) return NONE;
         }
-        if (PASSTHROUGH.has(name) || spec.extraPassthrough?.has(name)) return evalTaint(args, spec, env);
+        if (PASSTHROUGH.has(name) || spec.extraPassthrough?.has(name)) {
+          const inner = evalTaint(args, spec, env);
+          // Odkodowanie przywraca znaki specjalne, więc ucieczka z HTML przestaje chronić.
+          return spec.escapeContext && inner.escaped && DECODERS.has(name) ? unescaped(inner) : inner;
+        }
         if (REQUEST_PASSTHROUGH.has(name)) {
           let acc = NONE;
           for (const a of args) {
@@ -575,9 +623,11 @@ function evalChain(node: AnyNode, spec: TaintSpec, env: Env): TaintHit {
     }
     let hit = evalTaint(part, spec, env);
     if (hit.escaped && text !== '') {
-      hit = insideQuotes(text)
-        ? NONE
-        : { direct: hit.direct, viaVar: hit.viaVar, via: hit.via, source: hit.source, unquoted: true };
+      const verdict = (spec.escapeContext ?? sqlEscapeVerdict)(text);
+      if (verdict === 'covered') hit = NONE;
+      else if (verdict === 'exposed') {
+        hit = { direct: hit.direct, viaVar: hit.viaVar, via: hit.via, source: hit.source, unquoted: true };
+      }
     }
     acc = merge(acc, hit);
   }
@@ -1164,7 +1214,8 @@ export class TaintAnalyzer {
 
   // stack to przodkowie ujścia z obchodu AST. expr to wyrażenie do oceny.
   // at wskazuje węzeł, wg którego liczymy pozycję (domyślnie sam expr).
-  analyze(expr: unknown, stack: PhpNode[], at?: unknown): TaintHit {
+  // keepEscaped zwraca też trafienie, które przeszło przez funkcję ucieczki i czeka na ocenę kontekstu.
+  analyze(expr: unknown, stack: PhpNode[], at?: unknown, keepEscaped = false): TaintHit {
     const scope = this.scopeOf(stack);
     const scoped = this.scoped(scope);
     const off = startOffset(at ?? expr);
@@ -1188,7 +1239,7 @@ export class TaintAnalyzer {
       ),
     );
     // Wartość w całości po ucieczce cudzysłowów nie jest już skażona, o ile nie trafiła poza cudzysłów.
-    return hit.escaped ? NONE : hit;
+    return hit.escaped && !keepEscaped ? NONE : hit;
   }
 }
 

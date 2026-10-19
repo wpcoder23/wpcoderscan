@@ -7,7 +7,7 @@ import { calledName } from '../rules/ast-utils';
 import type { TaintAnalyzer } from '../rules/taint';
 import type { FileContext, Patch, PhpNode, TextEdit } from '../rules/types';
 import { detectParenStyle, wrapCall } from './style';
-import { chooseEscaper, contextAt } from './xss-context';
+import { chooseEscaper, contextAt, textSanitizerExposure } from './xss-context';
 
 const PLACEHOLDER = 'x';
 
@@ -22,9 +22,14 @@ const WRAPPABLE_CALLS = new Set([
   'urldecode',
   'rawurldecode',
   'sanitize_text_field',
+  'sanitize_textarea_field',
+  'wc_clean',
+  'sanitize_user',
+  'wp_strip_all_tags',
+  'strip_tags',
 ]);
 
-interface Rendered {
+export interface Rendered {
   text: string; // znany tekst wyjścia, niewiadome części zastąpione znakiem zastępczym
   literal: boolean; // czy w tekście jest choć jeden prawdziwy literał
   opaque: boolean; // czy trafił się fragment, którego tekstu nie umiemy poznać
@@ -146,6 +151,19 @@ function precedingOutput(stmt: AnyNode, stack: PhpNode[]): Rendered {
   return levels.reverse().reduce<Rendered>((acc, l) => join(acc, l), EMPTY);
 }
 
+// Tekst wypisany przed operandem k wyrażenia w echo albo print: wcześniejsze instrukcje, wcześniejsze wyrażenia
+// tego samego echo i operandy tego wyrażenia sprzed k.
+export function outputBefore(stmt: AnyNode, stack: PhpNode[], exprIndex: number, ops: AnyNode[], k: number): Rendered {
+  let before = precedingOutput(stmt, stack);
+  if (stmt.kind === 'echo' && Array.isArray(stmt.expressions)) {
+    for (let i = 0; i < exprIndex; i++) {
+      const n = asNode((stmt.expressions as unknown[])[i]);
+      if (n) before = join(before, renderChain(flattenConcat(n)));
+    }
+  }
+  return join(before, renderChain(ops.slice(0, k)));
+}
+
 function span(node: AnyNode): { start: number; end: number } | undefined {
   const loc = node.loc as { start?: { offset?: number }; end?: { offset?: number } } | undefined;
   const start = loc?.start?.offset;
@@ -204,17 +222,20 @@ export function buildXssPatch(input: XssPatchInput): Patch | undefined {
   const { ctx, taint, stmt, expr, exprIndex, stack } = input;
   const ops = flattenConcat(expr);
 
+  // Trafienia z ucieczką, która czeka na ocenę kontekstu (sanitize_text_field i podobne), też liczymy jako
+  // skażone. Opakowanie dostaje tylko ten, który w swoim miejscu nie jest chroniony.
   const tainted: number[] = [];
+  const sanitized = new Set<number>();
   for (let i = 0; i < ops.length; i++) {
-    const hit = taint.analyze(ops[i], stack);
-    if (hit.direct || hit.viaVar) tainted.push(i);
+    const hit = taint.analyze(ops[i], stack, undefined, true);
+    if (!(hit.direct || hit.viaVar)) continue;
+    tainted.push(i);
+    if (hit.escaped) sanitized.add(i);
   }
   if (tainted.length === 0) return undefined;
-  if (tainted.some((i) => !isSimpleOperand(ops[i]) || !span(ops[i]))) return undefined;
 
   // Tekst sprzed instrukcji (rodzeństwo w tej samej liście) i sąsiednie wyrażenia echo.
   const where = locateStatement(stmt, stack);
-  let before: Rendered = precedingOutput(stmt, stack);
   let afterChar = '';
   if (where) {
     const next = where.list[where.index + 1];
@@ -223,10 +244,6 @@ export function buildXssPatch(input: XssPatchInput): Patch | undefined {
 
   const siblingsExprs =
     stmt.kind === 'echo' && Array.isArray(stmt.expressions) ? (stmt.expressions as unknown[]) : [expr];
-  for (let i = 0; i < exprIndex; i++) {
-    const n = asNode(siblingsExprs[i]);
-    if (n) before = join(before, renderChain(flattenConcat(n)));
-  }
   // Pierwszy znak tekstu po całym wyrażeniu: następne wyrażenie echo albo inline po instrukcji.
   const nextExpr = asNode(siblingsExprs[exprIndex + 1]);
   const tailChar = nextExpr ? renderChain(flattenConcat(nextExpr)).text.charAt(0) : afterChar;
@@ -237,8 +254,11 @@ export function buildXssPatch(input: XssPatchInput): Patch | undefined {
   let used: string[] = [];
 
   for (const k of tainted) {
-    const prefix = join(before, renderChain(ops.slice(0, k)));
+    const prefix = outputBefore(stmt, stack, exprIndex, ops, k);
     if (prefix.opaque) return undefined;
+    // Po funkcji usuwającej znaczniki, w treści strony, nie ma czego opakowywać.
+    if (sanitized.has(k) && textSanitizerExposure(prefix.text) === 'covered') continue;
+    if (!isSimpleOperand(ops[k]) || !span(ops[k])) return undefined;
 
     // Pierwszy znak po tym operandzie: dalszy literał w łańcuchu albo koniec wyrażenia.
     let nextChar = '';
@@ -269,6 +289,7 @@ export function buildXssPatch(input: XssPatchInput): Patch | undefined {
     used.push(escaper);
   }
 
+  if (edits.length === 0) return undefined;
   used = [...new Set(used)];
   const names = used.map((u) => `${u}()`).join(ctx.t('join.and'));
   return {
