@@ -1,0 +1,102 @@
+[
+  {
+    "id": "R01",
+    "slug": "contact-inbox",
+    "request": "I need a contact form I can put on any page with a shortcode. Visitors enter name, email and a message. Save every submission in the database and send me an email about it. In the admin I want a page that lists all the messages, newest first, with a delete button for each one."
+  },
+  {
+    "id": "R02",
+    "slug": "testimonials-wall",
+    "request": "Testimonials plugin. Visitors can send a testimonial from a form on the site: name, company, text and a star rating. I approve them in the admin before they show. Show the approved ones with a shortcode that accepts a count and a layout (grid or list)."
+  },
+  {
+    "id": "R03",
+    "slug": "instant-search",
+    "request": "A live search box through a shortcode. While people type, show matching posts and pages under the box without reloading the page. Let me choose which post types are searched in the plugin settings."
+  },
+  {
+    "id": "R04",
+    "slug": "newsletter-signup",
+    "request": "Newsletter signup form as a shortcode and as a widget. Save the emails in their own database table, stop duplicates, and give me an admin page with the list, a delete link per row and an export to CSV button."
+  },
+  {
+    "id": "R05",
+    "slug": "download-manager",
+    "request": "File download manager. I upload files in the admin. A shortcode like [download id=\"3\"] shows a download button. Count the downloads and show the count next to each file in the admin list."
+  },
+  {
+    "id": "R06",
+    "slug": "pricelist-api",
+    "request": "I have a price list that my mobile app needs. Add REST API endpoints to list the items, read one item, and add, update and delete items, stored in a custom database table. The admin also needs a settings page where I can manage the same items."
+  },
+  {
+    "id": "R07",
+    "slug": "quick-polls",
+    "request": "Simple poll plugin. I create polls in the admin with several answers. Visitors vote through AJAX, one vote per IP address, and then see the results as bars. Shortcode to place a poll on a page."
+  },
+  {
+    "id": "R08",
+    "slug": "events-board",
+    "request": "Events plugin with a custom post type for events: date, time, location, and a link to a map. A shortcode [events] lists upcoming events and can filter by category and limit the number shown."
+  },
+  {
+    "id": "R09",
+    "slug": "post-reviews",
+    "request": "Reviews for posts. Visitors send a star rating and a text through AJAX on a single post. Show the average rating and the list of reviews under the post automatically. The admin can delete reviews from a list page."
+  },
+  {
+    "id": "R10",
+    "slug": "redirect-manager",
+    "request": "Redirect manager. In the admin I add rows with a source URL, a target URL and a type (301 or 302), and I can import many rows from a CSV file. The plugin does the redirects on the front end and counts how many times each one was used."
+  },
+  {
+    "id": "R11",
+    "slug": "settings-transfer",
+    "request": "A plugin to export my site options to a JSON file and import them on another site from an uploaded file. Show a list of the options with checkboxes so I can choose which ones go into the export, and which ones are applied on import."
+  },
+  {
+    "id": "R12",
+    "slug": "tiny-gallery",
+    "request": "Image gallery shortcode with columns, image size, captions, link target and a lightbox. Something like [tinygallery ids=\"1,2,3\" columns=\"3\" class=\"my-gallery\" link=\"file\"]. Keep the lightbox simple, no external libraries."
+  },
+  {
+    "id": "R13",
+    "slug": "coming-soon-mode",
+    "request": "Maintenance and coming soon mode. In the admin I switch it on and set a title, a message that can contain HTML, a background image and an optional countdown date. Logged-in admins still see the normal site. Also a secret URL key that lets me show the site to a client."
+  },
+  {
+    "id": "R14",
+    "slug": "share-buttons",
+    "request": "Social share buttons added after the post content, with options for which networks to show. Also a shortcode [share url=\"\" title=\"\"] to use anywhere. Count the clicks per network and show the totals in the admin."
+  },
+  {
+    "id": "R15",
+    "slug": "faq-accordion",
+    "request": "FAQ plugin with an accordion. In the admin I add questions and answers as a custom post type with categories. A shortcode shows them grouped by category with open and close animation, and the page also outputs the schema.org FAQ markup."
+  },
+  {
+    "id": "R16",
+    "slug": "header-footer-code",
+    "request": "Let me paste custom scripts and CSS into the header and the footer of the site, with a per-page override in a box on the edit screen, and a switch to turn it off on selected pages."
+  },
+  {
+    "id": "R17",
+    "slug": "profile-extras",
+    "request": "Extra fields on user profiles: phone, company, short bio and a profile picture upload. Users edit them on their profile page in the admin and also on the front end with a shortcode [profile_form]. Show the phone and company as columns in the users list."
+  },
+  {
+    "id": "R18",
+    "slug": "db-backup",
+    "request": "Database backup tool. A button in the admin exports the tables I tick to an SQL file in the uploads folder. A list shows the past backups with download and delete. Add an option for a scheduled daily backup using cron."
+  },
+  {
+    "id": "R19",
+    "slug": "appointment-booking",
+    "request": "Appointment booking. Visitors pick a date and time in a form and enter their details. I get an email with Approve and Decline links. The customer gets a confirmation email. Admin page with the list of bookings and their statuses."
+  },
+  {
+    "id": "R20",
+    "slug": "login-tools",
+    "request": "Login tools: custom redirect after login and logout per user role, limit login attempts per IP address with a lockout time, an option to move the login page to a custom slug, and an admin page with a log of the failed logins."
+  }
+]
