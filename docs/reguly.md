@@ -23,6 +23,24 @@ Nieznane funkcje nie przenoszą skażenia, więc skaner woli przeoczyć niż zas
 | `wp.option.no_sanitize_callback` | średni | pewna | CWE-20 | nie |
 | `wp.secret.hardcoded` | krytyczny, wysoki, średni | pewna lub heurystyka | CWE-798 | nie |
 | `wp.sqli.param_unprepared` (tryb `--extended`) | średni | heurystyka | CWE-89 | nie |
+| `wp.file.path_traversal` (tryb `--extended`) | krytyczny, wysoki, średni, niski | pewna lub heurystyka | CWE-22, CWE-73 | nie |
+| `wp.http.ssrf` (tryb `--extended`) | wysoki, średni, niski | pewna lub heurystyka | CWE-918 | nie |
+| `wp.upload.unrestricted` (tryb `--extended`) | krytyczny, wysoki, średni, niski | pewna lub heurystyka | CWE-434 | nie |
+| `wp.privilege.escalation` (tryb `--extended`) | krytyczny, wysoki | pewna lub heurystyka | CWE-269 | nie |
+| `wp.option.arbitrary_update` (tryb `--extended`) | krytyczny, wysoki, średni, niski | pewna lub heurystyka | CWE-915 | nie |
+
+## Bramka administratora
+
+Pięć reguł rozszerzonych sprawdza, kto może dotrzeć do kodu. Kod dostępny tylko dla administratora nie jest otwartymi drzwiami dla odwiedzającego. Reguły ścieżek, adresów i wysyłania plików obniżają taki wynik do słabej wskazówki. Reguły kont i opcji go pomijają. Skaner uznaje za bramkę:
+
+- `current_user_can( 'manage_options' )` i inne uprawnienia administratora (`manage_*`, `install_plugins`, `edit_users`, `promote_users` i podobne), także gdy uprawnienie stoi w zmiennej, która ma tylko taką wartość,
+- `is_super_admin()`, sprawdzenie roli `administrator` i `$user->has_cap( 'manage_options' )`,
+- wywołanie funkcji albo metody o nazwie sprawdzającej administratora (`user_is_admin`, `check_admin_permission`, `can_manage_options`) albo opakowania, które dostaje uprawnienie administratora, na przykład `$this->check_permission( 'manage_options' )`,
+- stronę menu zarejestrowaną z takim uprawnieniem oraz trasę REST, której `permission_callback` je sprawdza albo ma nazwę sprawdzenia administratora. Callback strony albo trasy stoi za bramką,
+- hook zarejestrowany w `if` ze sprawdzeniem uprawnienia administratora albo po wczesnym wyjściu dla pozostałych (`if ( ! current_user_can( 'manage_options' ) ) { return; }`). Samo `is_admin()` się nie liczy, bo pyta o ekran panelu, a nie o użytkownika. Funkcja zarejestrowana także bez takiego sprawdzenia jest otwarta,
+- pomocnika, którego ten sam plik woła wyłącznie z kodu za bramką. Handler woła pomocnika, a ten woła kolejnego. Funkcja zarejestrowana także jako callback hooka albo wołana na obiekcie nieznanej klasy się nie liczy.
+
+Nonce nie jest bramką, bo dostaje go każdy odwiedzający. `check_admin_referer()` sprawdza nonce, więc też nią nie jest. Uprawnienie zwykłego użytkownika (`edit_posts`) nie jest bramką. Skaner nie ocenia, czy sprawdzenie jest poprawne, i nie widzi bramki, która leży w innym pliku.
 
 ## wp.sqli.unprepared
 
@@ -128,6 +146,96 @@ function demo_get_order( $id ) {
 function demo_get_order( $id ) {
 	global $wpdb;
 	return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}orders WHERE id = %d", $id ) );
+}
+```
+
+## wp.file.path_traversal
+
+Reguła rozszerzona, włączana flagą `--extended`. Plik jest czytany, zapisywany albo usuwany pod ścieżką, która pochodzi od użytkownika. Atakujący może odczytać `wp-config.php`, nadpisać plik kodem PHP albo usunąć plik i przejąć witrynę.
+
+Reguła obejmuje `file_get_contents`, `readfile`, `file`, `fopen`, `parse_ini_file`, `simplexml_load_file`, `highlight_file`, `copy`, `rename`, `file_put_contents`, `unlink`, `wp_delete_file` oraz metody `$wp_filesystem` `get_contents`, `put_contents`, `copy`, `move` i `delete`. Ścieżka wzięta wprost z superglobala to wykrycie pewne. Zmienna zasilona danymi użytkownika to heurystyka. Zapis ma poziom krytyczny w wykryciu pewnym i wysoki w heurystyce. Odczyt i usunięcie mają poziom wysoki w wykryciu pewnym i średni w heurystyce.
+
+Reguła nie zgłasza ścieżki zredukowanej przez `basename`, `wp_basename` albo `sanitize_file_name`. Pomija ścieżkę sprawdzoną w tej samej funkcji (`validate_file`, `realpath`, szukanie `..`) oraz adres z ustalonym hostem, bo adresy obejmuje reguła SSRF. Pomija ścieżkę, w której dane stoją tylko w nazwie pliku za stałym fragmentem (`'img-' . $id`). Pomija też odczyt i usunięcie pliku o stałym, niegroźnym rozszerzeniu (`.jpg`, `.json`, `.csv`, `.txt`). Zapis pod taką ścieżką to heurystyka o niskim poziomie, bo plik nie wykona kodu. Funkcja za bramką na uprawnienie administratora to także heurystyka o niskim poziomie.
+
+```php
+// Podatne
+echo file_get_contents( WP_CONTENT_DIR . '/uploads/' . $_GET['file'] );
+unlink( $_POST['path'] );
+
+// Poprawne
+$name = wp_basename( $_GET['file'] );
+$base = realpath( WP_CONTENT_DIR . '/uploads' );
+$path = realpath( $base . '/' . $name );
+if ( $path && str_starts_with( $path, $base . DIRECTORY_SEPARATOR ) ) {
+	echo file_get_contents( $path );
+}
+```
+
+## wp.http.ssrf
+
+Reguła rozszerzona, włączana flagą `--extended`. Serwer wysyła żądanie HTTP pod adres, który pochodzi od użytkownika. Atakujący może skłonić serwer do wywołania usług wewnętrznych, adresów metadanych chmury albo obcych hostów.
+
+Reguła obejmuje `wp_remote_get`, `wp_remote_post`, `wp_remote_request`, `wp_remote_head`, `wp_remote_fopen`, `get_headers`, `curl_init`, opcję `CURLOPT_URL` w `curl_setopt` i `curl_setopt_array`, `fsockopen`, `pfsockopen` oraz `stream_socket_client`. O wyniku rozstrzyga początek adresu, bo zawiera schemat i host. Dane użytkownika doklejone za ustalonym hostem (`'https://api.example.com/?q=' . $q`) zmieniają tylko zapytanie, więc ich nie zgłaszamy. Host ustalony w zmiennej liczy się jako ustalony. Funkcje `wp_safe_remote_*` odrzucają adresy wewnętrzne, więc zostają poza regułą. Tak samo adres, który funkcja sprawdza przez `wp_http_validate_url`, `parse_url` albo `wp_parse_url`. Wykrycie pewne ma poziom wysoki. Heurystyka ma poziom średni. Funkcja za bramką na uprawnienie administratora to heurystyka o niskim poziomie.
+
+```php
+// Podatne
+$response = wp_remote_get( $_GET['url'] );
+
+// Poprawne
+$response = wp_safe_remote_get( esc_url_raw( $_GET['url'] ) );
+$response = wp_remote_get( 'https://api.example.com/v1/items?q=' . rawurlencode( $_GET['q'] ) );
+```
+
+## wp.upload.unrestricted
+
+Reguła rozszerzona, włączana flagą `--extended`. Wysłany plik jest zapisywany pod nazwą od klienta, a funkcja nie sprawdza typu pliku. Atakujący może wysłać skrypt PHP i uruchomić kod.
+
+Są dwie postacie. Pierwsza to `move_uploaded_file` z miejscem docelowym zbudowanym z danych użytkownika. Druga to `wp_handle_upload` albo `wp_handle_sideload` z `'test_type' => false`, co wyłącza kontrolę typu w rdzeniu. Nazwa wzięta wprost z `$_FILES` to wykrycie pewne. Plik o nieznanym pochodzeniu, na przykład z parametru funkcji, to heurystyka o poziomie średnim. Funkcja za bramką na uprawnienie administratora to heurystyka o niskim poziomie.
+
+Sprawdzenie liczy się, gdy stoi przed zapisem. Chodzi o wywołanie `wp_check_filetype`, `wp_check_filetype_and_ext`, `getimagesize`, `exif_imagetype`, `mime_content_type` albo `finfo_*`. Liczy się też odczyt rozszerzenia przez `pathinfo` razem z porównaniem z listą, porównanie pola `type` od klienta z listą, sprawdzenie końcówki nazwy (`str_ends_with( $nazwa, '.json' )`) oraz wywołanie funkcji, której nazwa mówi, że waliduje typ pliku (`is_allowed_file_type`, `validate_upload`). Sprawdzenie po zapisie liczy się tylko wtedy, gdy funkcja usuwa plik, który go nie przeszedł. Stałe rozszerzenie docelowe, które nie wykonuje kodu (`.jpg`, `.json`), kończy zgłoszenie. Stałe `.php` go nie kończy, bo treść pliku wybiera klient.
+
+```php
+// Podatne
+move_uploaded_file( $_FILES['file']['tmp_name'], WP_CONTENT_DIR . '/uploads/' . $_FILES['file']['name'] );
+
+// Poprawne
+$check = wp_check_filetype( $_FILES['file']['name'], array( 'jpg|jpeg' => 'image/jpeg', 'png' => 'image/png' ) );
+if ( $check['ext'] ) {
+	move_uploaded_file( $_FILES['file']['tmp_name'], WP_CONTENT_DIR . '/uploads/' . sanitize_file_name( $_FILES['file']['name'] ) );
+}
+```
+
+## wp.privilege.escalation
+
+Reguła rozszerzona, włączana flagą `--extended`. Rola, logowanie albo uprawnienia konta są sterowane przez żądanie. Atakujący może założyć konto administratora albo zalogować się jako dowolny użytkownik.
+
+Są cztery postacie. Rola z żądania trafia do `wp_insert_user`, `wp_update_user`, `set_role`, `add_role` albo `add_cap`, albo całe żądanie idzie jako dane konta (`wp_insert_user( $_POST )`). Klucz meta użytkownika z żądania trafia do `update_user_meta` albo `add_user_meta`, więc żądanie może zapisać `wp_capabilities`. Wartość z żądania trafia do meta uprawnień. Identyfikator użytkownika z żądania trafia do `wp_set_auth_cookie` albo `wp_set_current_user`, a nic w funkcji nie potwierdza, kim jest odwiedzający.
+
+Dowodem tożsamości jest wywołanie `wp_check_password`, `wp_signon`, `hash_equals`, `password_verify`, `hash_hmac`, `openssl_verify`, żądanie do dostawcy logowania, kontrola uprawnienia albo funkcja o nazwie w rodzaju `verify_*`, `authenticate_*` lub `decode_jwt`. Nonce nie jest dowodem, bo dostaje go każdy odwiedzający. Funkcja za bramką na uprawnienie administratora nie jest zgłaszana. Dotyczy to też strony menu i trasy REST, które rejestrują się z takim uprawnieniem. Logowanie w funkcji, która sprawdza środowisko deweloperskie, jest pomijane, bo na produkcji nie działa.
+
+```php
+// Podatne
+wp_insert_user( array( 'user_login' => $_POST['login'], 'user_pass' => $_POST['pass'], 'role' => $_POST['role'] ) );
+wp_set_auth_cookie( (int) $_GET['user_id'] );
+
+// Poprawne
+wp_insert_user( array( 'user_login' => sanitize_user( $_POST['login'] ), 'user_pass' => $_POST['pass'], 'role' => 'subscriber' ) );
+```
+
+## wp.option.arbitrary_update
+
+Reguła rozszerzona, włączana flagą `--extended`. Nazwa opcji WordPressa pochodzi od użytkownika. Atakujący może zmienić `default_role` albo `users_can_register` i przejąć witrynę, albo usunąć opcję rdzenia i ją zepsuć.
+
+Reguła obejmuje `update_option`, `add_option`, `delete_option` oraz ich warianty dla witryny i sieci. Stały przedrostek w nazwie (`'demo_' . $key`) ogranicza zakres do opcji wtyczki, więc go nie zgłaszamy. Stały koniec nazwy o długości co najmniej pięciu znaków (`$_POST['addon'] . '_notice_ignore'`) obniża wynik do heurystyki o niskim poziomie. Wyjątkiem są końcówki opcji ról (`user_roles`, `capabilities`). Wartość podana na stałe (`update_option( $nazwa, true )`) obniża wynik o jeden stopień, bo atakujący wybiera nazwę, ale nie wartość. Sprawdzenie przedrostka przed zapisem jest strażnikiem, gdy przedrostek ma co najmniej cztery znaki: `strpos( $key, 'demo_' ) !== 0` z wyjściem albo `str_starts_with( $key, 'demo_' )` w warunku. Luźne porównanie `!= 0` strażnikiem nie jest, bo `false == 0`. Funkcja za bramką na uprawnienie administratora nie jest zgłaszana. Dotyczy to też strony menu i trasy REST, które rejestrują się z takim uprawnieniem.
+
+```php
+// Podatne
+update_option( $_POST['name'], $_POST['value'] );
+
+// Poprawne
+$allowed = array( 'demo_color', 'demo_size' );
+if ( in_array( $_POST['name'], $allowed, true ) ) {
+	update_option( $_POST['name'], sanitize_text_field( $_POST['value'] ) );
 }
 ```
 

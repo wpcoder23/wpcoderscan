@@ -23,6 +23,24 @@ Unknown functions do not carry taint, so the scanner prefers to miss something o
 | `wp.option.no_sanitize_callback` | medium | firm | CWE-20 | no |
 | `wp.secret.hardcoded` | critical, high, medium | firm or heuristic | CWE-798 | no |
 | `wp.sqli.param_unprepared` (`--extended` mode) | medium | heuristic | CWE-89 | no |
+| `wp.file.path_traversal` (`--extended` mode) | critical, high, medium, low | firm or heuristic | CWE-22, CWE-73 | no |
+| `wp.http.ssrf` (`--extended` mode) | high, medium, low | firm or heuristic | CWE-918 | no |
+| `wp.upload.unrestricted` (`--extended` mode) | critical, high, medium, low | firm or heuristic | CWE-434 | no |
+| `wp.privilege.escalation` (`--extended` mode) | critical, high | firm or heuristic | CWE-269 | no |
+| `wp.option.arbitrary_update` (`--extended` mode) | critical, high, medium, low | firm or heuristic | CWE-915 | no |
+
+## Administrator gate
+
+The five extended rules look at who can reach the code. Code that only an administrator can reach is not an open door for a visitor. The path, address and upload rules lower such a finding to a low-severity hint. The account and option rules skip it. The scanner reads these as a gate:
+
+- `current_user_can( 'manage_options' )` and other administrator capabilities (`manage_*`, `install_plugins`, `edit_users`, `promote_users` and similar), also when the capability sits in a variable that only ever holds such a value,
+- `is_super_admin()`, a role check for `administrator` and `$user->has_cap( 'manage_options' )`,
+- a call to a function or method named after an administrator check (`user_is_admin`, `check_admin_permission`, `can_manage_options`), or to a wrapper such as `$this->check_permission( 'manage_options' )` that receives an administrator capability,
+- a menu page registered with such a capability, and a REST route whose `permission_callback` checks it or is named after an administrator check. The callback of the page or route is behind the gate,
+- a hook registered inside an `if` that checks an administrator capability, or after an early exit for everyone else (`if ( ! current_user_can( 'manage_options' ) ) { return; }`). `is_admin()` alone does not count, because it asks about the admin screen and not about the user. A function that is also registered without such a check is open,
+- a helper that the same file calls only from code behind the gate. A handler calls a helper, and the helper calls another helper. A function that is also registered as a hook callback, or called on an object of an unknown class, does not count.
+
+A nonce is not a gate, because every visitor gets one. `check_admin_referer()` checks a nonce, so it is not a gate either. A capability for an ordinary user (`edit_posts`) is not a gate. The scanner does not judge whether the check is correct, and it does not see a gate that sits in another file.
 
 ## wp.sqli.unprepared
 
@@ -128,6 +146,96 @@ function demo_get_order( $id ) {
 function demo_get_order( $id ) {
 	global $wpdb;
 	return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}orders WHERE id = %d", $id ) );
+}
+```
+
+## wp.file.path_traversal
+
+An extended rule, enabled with the `--extended` flag. A file is read, written or deleted at a path that comes from user input. An attacker can read `wp-config.php`, overwrite a file with PHP code or delete a file and take the site over.
+
+The rule covers `file_get_contents`, `readfile`, `file`, `fopen`, `parse_ini_file`, `simplexml_load_file`, `highlight_file`, `copy`, `rename`, `file_put_contents`, `unlink`, `wp_delete_file` and the `$wp_filesystem` methods `get_contents`, `put_contents`, `copy`, `move` and `delete`. A path taken straight from a superglobal is a firm finding. A variable fed from user input is a heuristic. A write is critical when firm and high as a heuristic. A read or a delete is high when firm and medium as a heuristic.
+
+The rule does not report a path reduced with `basename`, `wp_basename` or `sanitize_file_name`. It skips a path that the function checks (`validate_file`, `realpath`, a search for `..`) and a URL with a fixed host, because the SSRF rule covers URLs. It skips a path where user data stands only in the file name after a fixed fragment (`'img-' . $id`). It skips a read or a delete of a file with a fixed harmless extension (`.jpg`, `.json`, `.csv`, `.txt`). A write to such a path is a low-severity heuristic, because the file cannot run as code. A function behind an administrator capability check is a low-severity heuristic too.
+
+```php
+// Vulnerable
+echo file_get_contents( WP_CONTENT_DIR . '/uploads/' . $_GET['file'] );
+unlink( $_POST['path'] );
+
+// Correct
+$name = wp_basename( $_GET['file'] );
+$base = realpath( WP_CONTENT_DIR . '/uploads' );
+$path = realpath( $base . '/' . $name );
+if ( $path && str_starts_with( $path, $base . DIRECTORY_SEPARATOR ) ) {
+	echo file_get_contents( $path );
+}
+```
+
+## wp.http.ssrf
+
+An extended rule, enabled with the `--extended` flag. The server sends an HTTP request to an address that comes from user input. An attacker can make the server call internal services, cloud metadata addresses or other hosts.
+
+The rule covers `wp_remote_get`, `wp_remote_post`, `wp_remote_request`, `wp_remote_head`, `wp_remote_fopen`, `get_headers`, `curl_init`, the `CURLOPT_URL` option of `curl_setopt` and `curl_setopt_array`, `fsockopen`, `pfsockopen` and `stream_socket_client`. The start of the address decides the result, because it holds the scheme and the host. User data appended after a fixed host (`'https://api.example.com/?q=' . $q`) only changes the query, so it is not reported. A host fixed in a variable counts as fixed. The `wp_safe_remote_*` functions reject internal addresses, so they are outside the rule. So is an address that the function checks with `wp_http_validate_url`, `parse_url` or `wp_parse_url`. A firm finding is high. A heuristic is medium. A function behind an administrator capability check is a low-severity heuristic.
+
+```php
+// Vulnerable
+$response = wp_remote_get( $_GET['url'] );
+
+// Correct
+$response = wp_safe_remote_get( esc_url_raw( $_GET['url'] ) );
+$response = wp_remote_get( 'https://api.example.com/v1/items?q=' . rawurlencode( $_GET['q'] ) );
+```
+
+## wp.upload.unrestricted
+
+An extended rule, enabled with the `--extended` flag. An uploaded file is saved under a name that comes from the client, and nothing in the function checks the file type. An attacker can upload a PHP script and run code.
+
+Two forms. The first is `move_uploaded_file` with a target path built from user input. The second is `wp_handle_upload` or `wp_handle_sideload` with `'test_type' => false`, which turns off the core type check. A name taken straight from `$_FILES` is a firm finding. A file of unknown origin, for example a function parameter, is a medium heuristic. A function behind an administrator capability check is a low-severity heuristic.
+
+A check counts when it stands before the save. That means a call to `wp_check_filetype`, `wp_check_filetype_and_ext`, `getimagesize`, `exif_imagetype`, `mime_content_type` or `finfo_*`. It also means reading the extension with `pathinfo` and comparing it with a list, comparing the client's `type` field with a list, checking the ending of the name (`str_ends_with( $name, '.json' )`) or calling a function whose name says that it validates the file type (`is_allowed_file_type`, `validate_upload`). A check after the save counts only when the function deletes the file that fails it. A fixed target extension that cannot run (`.jpg`, `.json`) ends the report. A fixed `.php` does not, because the client chooses the content.
+
+```php
+// Vulnerable
+move_uploaded_file( $_FILES['file']['tmp_name'], WP_CONTENT_DIR . '/uploads/' . $_FILES['file']['name'] );
+
+// Correct
+$check = wp_check_filetype( $_FILES['file']['name'], array( 'jpg|jpeg' => 'image/jpeg', 'png' => 'image/png' ) );
+if ( $check['ext'] ) {
+	move_uploaded_file( $_FILES['file']['tmp_name'], WP_CONTENT_DIR . '/uploads/' . sanitize_file_name( $_FILES['file']['name'] ) );
+}
+```
+
+## wp.privilege.escalation
+
+An extended rule, enabled with the `--extended` flag. The role, the login or the capabilities of an account are controlled by the request. An attacker can create an administrator account or sign in as any user.
+
+Four forms. A role from the request reaches `wp_insert_user`, `wp_update_user`, `set_role`, `add_role` or `add_cap`, or the whole request is passed as account data (`wp_insert_user( $_POST )`). A user meta key from the request reaches `update_user_meta` or `add_user_meta`, so the request can write `wp_capabilities`. A value from the request is written to the capabilities meta. A user ID from the request reaches `wp_set_auth_cookie` or `wp_set_current_user` and nothing in the function proves who the visitor is.
+
+Proof of identity is a call to `wp_check_password`, `wp_signon`, `hash_equals`, `password_verify`, `hash_hmac`, `openssl_verify`, a request to a login provider, a capability check, or a function named like `verify_*`, `authenticate_*` or `decode_jwt`. A nonce is no proof, because every visitor gets one. A function behind an administrator capability is not reported. That includes a menu page or a REST route that is registered with such a capability. A login in a function that checks for a development environment is skipped, because it does not run in production.
+
+```php
+// Vulnerable
+wp_insert_user( array( 'user_login' => $_POST['login'], 'user_pass' => $_POST['pass'], 'role' => $_POST['role'] ) );
+wp_set_auth_cookie( (int) $_GET['user_id'] );
+
+// Correct
+wp_insert_user( array( 'user_login' => sanitize_user( $_POST['login'] ), 'user_pass' => $_POST['pass'], 'role' => 'subscriber' ) );
+```
+
+## wp.option.arbitrary_update
+
+An extended rule, enabled with the `--extended` flag. The name of a WordPress option comes from user input. An attacker can change `default_role` or `users_can_register` and take the site over, or delete a core option and break it.
+
+The rule covers `update_option`, `add_option`, `delete_option` and their site and network variants. A fixed prefix in the name (`'demo_' . $key`) limits the scope to the plugin's own options, so it is not reported. A fixed ending of five or more characters (`$_POST['addon'] . '_notice_ignore'`) lowers the result to a low-severity heuristic. Endings that name role options (`user_roles`, `capabilities`) are the exception. A fixed value (`update_option( $name, true )`) lowers the result by one level, because the attacker picks the name but not the value. A check of the prefix before the write is a guard when the prefix has at least four characters: `strpos( $key, 'demo_' ) !== 0` followed by an exit, or `str_starts_with( $key, 'demo_' )` in the condition. The loose comparison `!= 0` is not a guard, because `false == 0`. A function behind an administrator capability check is not reported. That includes a menu page or a REST route that is registered with such a capability.
+
+```php
+// Vulnerable
+update_option( $_POST['name'], $_POST['value'] );
+
+// Correct
+$allowed = array( 'demo_color', 'demo_size' );
+if ( in_array( $_POST['name'], $allowed, true ) ) {
+	update_option( $_POST['name'], sanitize_text_field( $_POST['value'] ) );
 }
 ```
 

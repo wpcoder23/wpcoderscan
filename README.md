@@ -7,7 +7,7 @@ Security scanner for WordPress and PHP code. It finds vulnerabilities in plugins
 
 English | [Polski](README.pl.md)
 
-This is an early release (v0.5.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
+This is an early release (v0.6.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
 
 ## Quick start
 
@@ -41,7 +41,7 @@ node dist/cli.js ./path-to-plugin --json
 
 ## What it detects
 
-The scanner covers eight classes of vulnerabilities. The rules follow user input inside a function and across calls between functions of the same file. A variable assigned from `$_GET` is tainted. After a numeric cast, `absint` or `escapeshellarg` it is not. `esc_sql` removes the taint only for a value that sits inside quotes in the query.
+The scanner covers eight classes of vulnerabilities, and five more with `--extended`. The rules follow user input inside a function and across calls between functions of the same file. A variable assigned from `$_GET` is tainted. After a numeric cast, `absint` or `escapeshellarg` it is not. `esc_sql` removes the taint only for a value that sits inside quotes in the query.
 
 The scanner treats these as user input:
 
@@ -64,7 +64,16 @@ A variable checked before use stops being tainted. The scanner accepts `in_array
 - XSS: user input in `echo`, `print`, `printf`, `die`, `wp_die` and in the value returned by a shortcode, without `esc_*`, `wp_kses`, `sanitize_*` or a cast (heuristic).
 - Nonce and capabilities: `admin_post_*` and `wp_ajax_*` handlers that change state without a nonce check or without `current_user_can` (heuristic). The handler can be a function, a closure or a class method from the same file. A missing capability check with a nonce present is medium severity, and missing both is high.
 
-Extended mode (`--extended`) adds the rule `wp.sqli.param_unprepared`: a function parameter concatenated into a `$wpdb` query without `prepare`. The scanner cannot see the callers in other files, so this is a medium-severity warning and it is off by default. It matches many historical SQL injection bugs and also a lot of safe code, so you have to ask for it.
+Extended mode (`--extended`) adds six rules. They are off by default, because they match real bugs and also a lot of safe code, so you have to ask for them.
+
+- `wp.sqli.param_unprepared`: a function parameter concatenated into a `$wpdb` query without `prepare`. The scanner cannot see the callers in other files, so this is a medium-severity warning.
+- `wp.file.path_traversal`: a file read, written or deleted at a path from user input (`file_get_contents`, `unlink`, `file_put_contents`, `copy`, `$wp_filesystem` and others). A path reduced with `basename` or checked with `realpath` is not reported.
+- `wp.http.ssrf`: an HTTP request to an address from user input (`wp_remote_get`, `curl_init`, `fsockopen`). User data appended after a fixed host is not reported, and `wp_safe_remote_*` is outside the rule.
+- `wp.upload.unrestricted`: an uploaded file saved under the client's name without a file type check, or `wp_handle_upload` with `test_type` turned off.
+- `wp.privilege.escalation`: the role, the login or the capabilities of an account taken from the request (`wp_insert_user`, `set_role`, `update_user_meta`, `wp_set_auth_cookie`).
+- `wp.option.arbitrary_update`: an option name taken from user input (`update_option( $_POST['name'], ... )`).
+
+Code that only an administrator can reach is not an open door for a visitor. The file, request and upload rules give it only a low-severity hint, and the account and option rules stay quiet. The scanner reads as a gate an administrator capability check, a menu page or a REST route registered with one, a hook registered only under such a check, a permission function named like an administrator check, and a helper that the same file calls only from code behind such a gate. A nonce is not a gate. The details are in [docs/rules.md](docs/rules.md#administrator-gate).
 
 A full description of every rule with vulnerable and correct code examples is in [docs/rules.md](docs/rules.md).
 
@@ -88,10 +97,11 @@ npx wpcoderscan ./path-to-plugin --lang pl
 
 ## Measured results
 
-The scanner is measured on known vulnerabilities and on popular plugins. The set has 475 pairs of a CVE and a vulnerable plugin version, from 2023 to 2025.
+The scanner is measured on known vulnerabilities and on popular plugins. The main set has 475 pairs of a CVE and a vulnerable plugin version, from 2023 to 2025.
 
 - Default mode reports a finding of the right class within 25 lines of the CVE line in 144 of 475 cases (30.3%). With `--extended` it is 162 of 475 (34.1%).
-- On the 200 most popular free plugins from wordpress.org (49 thousand PHP files), 97 plugins have no finding. The median is one finding per plugin.
+- A second set of 301 pairs covers the classes of the five rules that `--extended` added in 0.6.0. With `--extended` the scanner reports the right class within 25 lines of the CVE line in 58 of 301 cases (19.3%). Without the new rules the same scan reports 12 (4.0%). The rules were tuned while this set was visible, so it is not a blind test.
+- On the 200 most popular free plugins from wordpress.org, 198 of which still download (49 thousand PHP files), 96 plugins have no finding in the default mode. The median is one finding per plugin. With `--extended` the median is still one, and the five new rules add 43 findings in 19 plugins.
 
 Many of the misses are XSS bugs whose data flow crosses files. The scanner follows calls only inside a file. There is no false-positive rate here, because nobody has triaged all the findings. The method, the data and the scripts are in [benchmark/](benchmark/README.md). You can run them again.
 
@@ -138,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.5.0
+      - uses: wpcoder23/wpcoderscan@v0.6.0
         with:
           path: .
           fail-on: high

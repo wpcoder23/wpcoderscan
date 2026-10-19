@@ -7,7 +7,7 @@ Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtycze
 
 [English](README.md) | Polski
 
-To wczesny etap (v0.5.0). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
+To wczesny etap (v0.6.0). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
@@ -41,7 +41,7 @@ node dist/cli.js ./sciezka-do-wtyczki --json
 
 ## Co wykrywa
 
-Skaner pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w obrębie funkcji i przez wywołania między funkcjami z tego samego pliku. Zmienna przypisana z `$_GET` jest skażona, a po rzutowaniu na liczbę, `absint` czy `escapeshellarg` już nie. `esc_sql` zdejmuje skażenie tylko dla wartości w cudzysłowie zapytania.
+Skaner pokrywa osiem klas podatności, a z flagą `--extended` jeszcze pięć. Reguły śledzą dane użytkownika w obrębie funkcji i przez wywołania między funkcjami z tego samego pliku. Zmienna przypisana z `$_GET` jest skażona, a po rzutowaniu na liczbę, `absint` czy `escapeshellarg` już nie. `esc_sql` zdejmuje skażenie tylko dla wartości w cudzysłowie zapytania.
 
 Za dane od użytkownika skaner uznaje:
 
@@ -64,7 +64,16 @@ Zmienna sprawdzona przed użyciem przestaje być skażona. Skaner uznaje za spra
 - XSS: dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` oraz w wartości zwracanej przez shortcode, bez `esc_*`, `wp_kses`, `sanitize_*` ani rzutowania (heurystyka).
 - Nonce i uprawnienia: uchwyty `admin_post_*` i `wp_ajax_*`, które zmieniają stan bez weryfikacji nonce albo bez `current_user_can` (heurystyka). Uchwytem może być funkcja, domknięcie albo metoda klasy z tego samego pliku. Brak uprawnień przy obecnym nonce to poziom średni, a brak obu zabezpieczeń to wysoki.
 
-Tryb rozszerzony (`--extended`) dodaje regułę `wp.sqli.param_unprepared`: parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących z innych plików, więc to ostrzeżenie średniego poziomu, domyślnie wyłączone. Tak wygląda wiele historycznych podatności SQL injection, a zarazem sporo bezpiecznego kodu, dlatego trzeba o nią poprosić.
+Tryb rozszerzony (`--extended`) dodaje sześć reguł. Są domyślnie wyłączone, bo łapią prawdziwe błędy, a zarazem sporo bezpiecznego kodu, dlatego trzeba o nie poprosić.
+
+- `wp.sqli.param_unprepared`: parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących z innych plików, więc to ostrzeżenie średniego poziomu.
+- `wp.file.path_traversal`: plik czytany, zapisywany albo usuwany pod ścieżką od użytkownika (`file_get_contents`, `unlink`, `file_put_contents`, `copy`, `$wp_filesystem` i inne). Ścieżka zredukowana przez `basename` albo sprawdzona przez `realpath` nie jest zgłaszana.
+- `wp.http.ssrf`: żądanie HTTP pod adres od użytkownika (`wp_remote_get`, `curl_init`, `fsockopen`). Dane użytkownika doklejone za ustalonym hostem nie są zgłaszane, a `wp_safe_remote_*` zostaje poza regułą.
+- `wp.upload.unrestricted`: wysłany plik zapisany pod nazwą od klienta bez sprawdzenia typu albo `wp_handle_upload` z wyłączonym `test_type`.
+- `wp.privilege.escalation`: rola, logowanie albo uprawnienia konta wzięte z żądania (`wp_insert_user`, `set_role`, `update_user_meta`, `wp_set_auth_cookie`).
+- `wp.option.arbitrary_update`: nazwa opcji wzięta od użytkownika (`update_option( $_POST['name'], ... )`).
+
+Kod dostępny tylko dla administratora nie jest otwartymi drzwiami dla odwiedzającego. Reguły plików, żądań i wysyłania dają dla niego tylko wskazówkę o niskim poziomie, a reguły kont i opcji milczą. Skaner uznaje za bramkę sprawdzenie uprawnienia administratora, stronę menu albo trasę REST zarejestrowane z takim uprawnieniem, hook zarejestrowany tylko pod takim sprawdzeniem, funkcję uprawnień o nazwie sprawdzenia administratora i pomocnika, którego ten sam plik woła wyłącznie z kodu za taką bramką. Nonce nie jest bramką. Szczegóły są w [docs/reguly.md](docs/reguly.md#bramka-administratora).
 
 Pełny opis każdej reguły z przykładami podatnego i poprawnego kodu jest w [docs/reguly.md](docs/reguly.md) (po angielsku: [docs/rules.md](docs/rules.md)).
 
@@ -88,10 +97,11 @@ npx wpcoderscan ./sciezka-do-wtyczki --lang pl
 
 ## Wyniki pomiarów
 
-Skaner mierzymy na znanych podatnościach i na popularnych wtyczkach. Zbiór ma 475 par: zgłoszenie CVE i podatna wersja wtyczki, lata 2023-2025.
+Skaner mierzymy na znanych podatnościach i na popularnych wtyczkach. Główny zbiór ma 475 par: zgłoszenie CVE i podatna wersja wtyczki, lata 2023-2025.
 
 - Tryb domyślny zgłasza znalezisko właściwej klasy w odległości do 25 linii od linii z CVE w 144 z 475 przypadków (30,3%). Z `--extended` jest to 162 z 475 (34,1%).
-- Na 200 najpopularniejszych darmowych wtyczkach z wordpress.org (49 tysięcy plików PHP) 97 wtyczek nie ma żadnego znaleziska. Mediana to jedno znalezisko na wtyczkę.
+- Drugi zbiór, 301 par, obejmuje klasy pięciu reguł, które `--extended` dostało w 0.6.0. Z `--extended` skaner zgłasza właściwą klasę w odległości do 25 linii od linii z CVE w 58 z 301 przypadków (19,3%). Bez nowych reguł ten sam skan zgłasza 12 (4,0%). Reguły strojono, gdy ten zbiór był widoczny, więc to nie jest test ślepy.
+- Na 200 najpopularniejszych darmowych wtyczkach z wordpress.org, z których 198 da się jeszcze pobrać (49 tysięcy plików PHP), 96 wtyczek nie ma żadnego znaleziska w trybie domyślnym. Mediana to jedno znalezisko na wtyczkę. Z `--extended` mediana nadal wynosi jeden, a pięć nowych reguł dodaje 43 znaleziska w 19 wtyczkach.
 
 Wiele chybień to XSS, w którym dane przechodzą między plikami. Skaner śledzi wywołania tylko w obrębie pliku. Odsetka fałszywych alarmów tu nie ma, bo nikt nie przejrzał wszystkich znalezisk. Metoda, dane i skrypty są w [benchmark/](benchmark/README.md). Możesz je uruchomić ponownie.
 
@@ -138,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.5.0
+      - uses: wpcoder23/wpcoderscan@v0.6.0
         with:
           path: .
           fail-on: high
