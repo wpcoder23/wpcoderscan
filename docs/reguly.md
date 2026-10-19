@@ -42,6 +42,16 @@ Pięć reguł rozszerzonych sprawdza, kto może dotrzeć do kodu. Kod dostępny 
 
 Nonce nie jest bramką, bo dostaje go każdy odwiedzający. `check_admin_referer()` sprawdza nonce, więc też nią nie jest. Uprawnienie zwykłego użytkownika (`edit_posts`) nie jest bramką. Skaner nie ocenia, czy sprawdzenie jest poprawne, i nie widzi bramki, która leży w innym pliku.
 
+## Wyciszanie znalezisk
+
+Przejrzane znalezisko można wyciszyć na trzy sposoby, od najwęższego do najszerszego.
+
+- Komentarz wyciszający obok kodu: `// wpcoderscan-ignore wp.rce.dynamic -- powód`. Identyfikator reguły jest wymagany. `wpcoderscan-ignore-file` obejmuje cały plik.
+- Plik baseline, który ukrywa znaleziska istniejące już w chwili wprowadzenia bramki.
+- Opcje `rules` i `exclude` w `.wpcoderscan.json`, które wyłączają regułę albo pomijają ścieżki w całym projekcie.
+
+Każdy sposób opisuje README.pl w części [Wdrożenie w istniejącym kodzie](../README.pl.md#wdrożenie-w-istniejącym-kodzie).
+
 ## wp.sqli.unprepared
 
 Zapytanie `$wpdb` budowane z danych użytkownika bez `prepare`. Superglobal wprost w zapytaniu to wykrycie pewne i krytyczne. Zmienna zasilona superglobalem to heurystyka o wysokiej wadze. Zwykłe zmienne i nazwy tabel nie są zgłaszane.

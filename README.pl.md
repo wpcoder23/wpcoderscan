@@ -7,7 +7,7 @@ Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtycze
 
 [English](README.md) | Polski
 
-To wczesny etap (v0.6.0). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
+To wczesny etap (v0.7.0). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
@@ -125,6 +125,69 @@ Podpowiedzi nie dostaje nic, co wymaga decyzji o kontekście: skrypty, style, at
 
 Wstrzyknięcia SQL, RCE, brak kontroli dostępu i zaszyte sekrety skaner celowo nie naprawia sam, bo poprawna zmiana zależy od projektu.
 
+## Wdrożenie w istniejącym kodzie
+
+Skaner, który pierwszego dnia zgłasza setki starych znalezisk, zostaje wyłączony. Trzy narzędzia pozwalają zacząć z czystą bramką i naprawiać stare znaleziska z czasem.
+
+### Baseline
+
+Zapisz dzisiejsze znaleziska raz. Od tej chwili skaner zgłasza, i łamie build, tylko na nowych znaleziskach.
+
+```bash
+npx wpcoderscan . --write-baseline .wpcoderscan-baseline.json
+npx wpcoderscan . --baseline .wpcoderscan-baseline.json
+```
+
+Zatwierdź plik w repozytorium. Znalezisko dopasowujemy po regule, pliku, treści jego linii i numerze wśród identycznych linii. Numer linii nie gra roli, więc przenoszenie kodu nie przywraca starych znalezisk. Gdy naprawisz stare znalezisko, jego wpis staje się nieaktualny. Raport podaje, ile wpisów nie ma dopasowania, a `--write-baseline` odświeża plik.
+
+`--write-baseline` zawsze skanuje od zera, zapisuje plik i kończy się kodem 0. Nie działa razem z `--diff`, bo baseline objąłby tylko zmienione pliki. Uruchamiaj każdy skan z tego samego katalogu, bo plik zapisuje ścieżki względem katalogu roboczego.
+
+### Komentarze wyciszające
+
+Oznacz znalezisko, które zostało przejrzane i zaakceptowane.
+
+```php
+// wpcoderscan-ignore wp.rce.dynamic -- nazwa szablonu pochodzi ze stałej listy
+include $path;
+
+$rows = $wpdb->get_results( $sql ); // wpcoderscan-ignore wp.sqli.unprepared -- $sql składa się z rzutowań
+
+// wpcoderscan-ignore-file wp.secret.hardcoded -- publiczny klucz demonstracyjny
+```
+
+- Komentarz w osobnej linii obejmuje następną linię. Komentarz za kodem obejmuje własną linię. `wpcoderscan-ignore-file` obejmuje cały plik. Działają `//`, `#` i `/* */`.
+- Identyfikator reguły jest wymagany. Kilka identyfikatorów oddziel przecinkami albo użyj `*`, na przykład `wp.xss.*`.
+- Komentarz bez identyfikatora niczego nie wycisza i pojawia się jako ostrzeżenie. Tak samo identyfikator, który nie pasuje do żadnej reguły. Dzięki temu widać literówki.
+- Tekst po ` -- ` to powód.
+- Raport zawsze podaje, ile znalezisk wyciszyły komentarze. JSON wymienia je w polu `suppressed`, a SARIF niesie ich liczbę we właściwościach przebiegu. GitHub nie honoruje wyciszeń zapisanych w SARIF, więc wyciszonych znalezisk nie ma w wynikach SARIF.
+- Przy audycie cudzego kodu dodaj `--no-ignore-comments`. Inaczej autor mógłby ukryć znaleziska komentarzem.
+
+### Plik ustawień
+
+`.wpcoderscan.json` w bieżącym katalogu zawiera te same opcje co flagi, więc zespół dzieli jedną konfigurację.
+
+```json
+{
+  "failOn": "high",
+  "strict": false,
+  "extended": false,
+  "lang": "pl",
+  "exclude": ["tests/", "legacy/", "*.min.php"],
+  "rules": { "wp.auth.unprotected_action": "off" },
+  "baseline": ".wpcoderscan-baseline.json",
+  "ignoreComments": true
+}
+```
+
+- Flaga ma pierwszeństwo przed zmienną środowiskową, zmienna przed plikiem, a plik przed wartością domyślną.
+- Skaner czyta plik tylko z bieżącego katalogu albo ze ścieżki podanej w `--config`. Nigdy nie czyta go ze skanowanego kodu, więc sprawdzana wtyczka nie wyłączy skanerowi reguł. `--no-config` pomija plik.
+- `exclude` przyjmuje proste wzorce ścieżek względem pliku ustawień: `*`, `**` i `?`. Nazwa bez ukośnika pasuje na każdej głębokości. Ukośnik na początku zakotwicza wzorzec w katalogu pliku ustawień. Ukośnik na końcu oznacza sam katalog.
+- `rules` pozwala tylko wyłączyć regułę wartością `off`. Nazwa może zawierać `*`. Nazwa, która nie pasuje do żadnej reguły, daje ostrzeżenie.
+- `baseline` to ścieżka względem pliku ustawień.
+- Nieznana opcja albo zły typ to błąd z kodem 2, więc literówka nie osłabi bramki po cichu.
+
+Plik ustawień, plik baseline i komentarze są częścią repozytorium, więc pull request może je zmienić. Przeglądaj takie zmiany jak kod. Wpis w `CODEOWNERS` dla dwóch pierwszych plików to ułatwia.
+
 ## Formaty wyjścia
 
 - Terminal (domyślnie), czytelny raport z oceną.
@@ -134,6 +197,9 @@ Wstrzyknięcia SQL, RCE, brak kontroli dostępu i zaszyte sekrety skaner celowo 
 - `--suggest` i `--patch <plik>`, podpowiedzi napraw (opisane wyżej).
 - `--extended`, dodatkowe reguły o niższej precyzji (opisane wyżej).
 - `--lang <en|pl>`, język wyjścia (opisane wyżej).
+- `--write-baseline <plik>` i `--baseline <plik>`, zgłaszanie tylko nowych znalezisk (opisane wyżej).
+- `--config <plik>` i `--no-config`, plik ustawień (opisane wyżej).
+- `--no-ignore-comments`, pomijanie komentarzy `wpcoderscan-ignore` (opisane wyżej).
 
 ## GitHub Action
 
@@ -148,13 +214,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.6.0
+      - uses: wpcoder23/wpcoderscan@v0.7.0
         with:
           path: .
           fail-on: high
           # extended: 'true'   # dodatkowe reguły o niższej precyzji
           # lang: pl           # komunikaty po polsku (domyślnie en)
+          # baseline: .wpcoderscan-baseline.json   # zgłaszaj tylko znaleziska spoza tego pliku
+          # config: .wpcoderscan.json              # plik ustawień, jeśli nie leży w korzeniu repozytorium
 ```
+
+Akcja czyta `.wpcoderscan.json` z korzenia repozytorium, tak jak linia poleceń. `fail-on` albo `lang` ustawione w workflow mają pierwszeństwo przed plikiem. Pomiń je, gdy ma decydować plik.
 
 ## Licencja
 

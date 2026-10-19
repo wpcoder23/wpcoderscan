@@ -7,7 +7,7 @@ Security scanner for WordPress and PHP code. It finds vulnerabilities in plugins
 
 English | [Polski](README.pl.md)
 
-This is an early release (v0.6.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
+This is an early release (v0.7.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
 
 ## Quick start
 
@@ -125,6 +125,69 @@ Anything that needs a decision about context gets no suggestion: scripts, styles
 
 SQL injection, RCE, missing access control and hardcoded secrets are deliberately not fixed by the scanner, because the correct change depends on the project.
 
+## Adopt it in an existing codebase
+
+A scanner that reports hundreds of old findings on the first day gets switched off. Three tools let you start with a clean gate and fix the old findings over time.
+
+### Baseline
+
+Save today's findings once. From then on the scanner reports, and fails the build, only on new findings.
+
+```bash
+npx wpcoderscan . --write-baseline .wpcoderscan-baseline.json
+npx wpcoderscan . --baseline .wpcoderscan-baseline.json
+```
+
+Commit the file. A finding matches by rule, file, the text of its line and its number among identical lines. It does not match by line number, so moving code around does not bring old findings back. When you fix an old finding, its entry goes stale. The report says how many entries have no match, and `--write-baseline` refreshes the file.
+
+`--write-baseline` always scans from scratch, writes the file and exits with code 0. It cannot be combined with `--diff`, because the baseline would cover only the changed files. Run every scan from the same directory, because the file stores paths relative to the working directory.
+
+### Ignore comments
+
+Mark a finding that was reviewed and accepted.
+
+```php
+// wpcoderscan-ignore wp.rce.dynamic -- the template name comes from a fixed list
+include $path;
+
+$rows = $wpdb->get_results( $sql ); // wpcoderscan-ignore wp.sqli.unprepared -- $sql is built from casts
+
+// wpcoderscan-ignore-file wp.secret.hardcoded -- public demo key
+```
+
+- A comment on its own line covers the next line. A comment after code covers its own line. `wpcoderscan-ignore-file` covers the whole file. Use `//`, `#` or `/* */`.
+- The rule id is required. List several ids separated by commas, or use `*`, for example `wp.xss.*`.
+- A comment without a rule id suppresses nothing and appears as a warning. So does an id that matches no rule, which catches typos.
+- Text after ` -- ` is the reason.
+- The report always says how many findings comments suppressed. JSON lists them under `suppressed`, and SARIF carries the count in the run properties. GitHub does not honor suppressions inside SARIF, so suppressed findings are not in the SARIF results.
+- When you audit someone else's code, add `--no-ignore-comments`. Otherwise its author can hide findings with a comment.
+
+### Settings file
+
+`.wpcoderscan.json` in the current directory holds the same options as the flags, so a team shares one setup.
+
+```json
+{
+  "failOn": "high",
+  "strict": false,
+  "extended": false,
+  "lang": "en",
+  "exclude": ["tests/", "legacy/", "*.min.php"],
+  "rules": { "wp.auth.unprotected_action": "off" },
+  "baseline": ".wpcoderscan-baseline.json",
+  "ignoreComments": true
+}
+```
+
+- A flag beats an environment variable, the variable beats the file, and the file beats the default.
+- The scanner reads the file only from the current directory, or from the path given in `--config`. It never reads one from the scanned code, so a plugin you check cannot switch rules off. `--no-config` skips the file.
+- `exclude` takes simple path patterns relative to the settings file: `*`, `**` and `?`. A name without a slash matches at any depth. A leading `/` anchors the pattern to the directory of the settings file. A trailing `/` matches directories only.
+- `rules` can only switch a rule `off`. A name can use `*`. A name that matches no rule gives a warning.
+- `baseline` is a path relative to the settings file.
+- An unknown option or a wrong type is an error with exit code 2, so a typo cannot quietly weaken the gate.
+
+The settings file, the baseline file and the comments live in the repository, so a pull request can change them. Review those changes like code. A `CODEOWNERS` entry for the first two files helps.
+
 ## Output formats
 
 - Terminal (default), a readable report with a score.
@@ -134,6 +197,9 @@ SQL injection, RCE, missing access control and hardcoded secrets are deliberatel
 - `--suggest` and `--patch <file>`, fix suggestions (described above).
 - `--extended`, additional rules with lower precision (described above).
 - `--lang <en|pl>`, output language (described above).
+- `--write-baseline <file>` and `--baseline <file>`, report only findings that are new (described above).
+- `--config <file>` and `--no-config`, the settings file (described above).
+- `--no-ignore-comments`, do not honor `wpcoderscan-ignore` comments (described above).
 
 ## GitHub Action
 
@@ -148,13 +214,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.6.0
+      - uses: wpcoder23/wpcoderscan@v0.7.0
         with:
           path: .
           fail-on: high
           # extended: 'true'   # additional rules with lower precision
           # lang: pl           # Polish messages (default: en)
+          # baseline: .wpcoderscan-baseline.json   # report only findings that are not in this file
+          # config: .wpcoderscan.json              # settings file, if it is not in the repository root
 ```
+
+The action reads `.wpcoderscan.json` from the repository root, like the command line does. A `fail-on` or `lang` set in the workflow wins over the file. Leave them out when the file should decide.
 
 ## License
 

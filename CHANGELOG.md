@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+Adopting the scanner in an existing codebase. A baseline, ignore comments and a settings file let a team start with a clean gate, accept reviewed findings and fix the old ones over time.
+
+The rules and the measurements are unchanged: 144 (30.3%) of 475 pairs in the default mode, 162 (34.1%) with `--extended`, and 579 findings on the 198 popular plugins. Nothing here changes what a scan finds. It changes what a scan reports.
+
+- Baseline. `--write-baseline <file>` saves the findings of a scan and exits with code 0. `--baseline <file>` reports, and fails the build, only on findings that are not in the file. A finding matches by rule, file, the text of its line and its number among identical lines, so moving code does not bring it back. The report counts the findings the baseline hides and the entries that no longer match anything, only for rules that ran and files that were read. `--write-baseline` cannot be combined with `--diff`.
+- Ignore comments. `// wpcoderscan-ignore <rule> -- reason` silences the next line, or its own line when it follows code. `wpcoderscan-ignore-file` covers a file. The rule id is required and accepts commas and `*`. A comment without one, or with a name that matches no rule, gives a warning and silences nothing. The report counts the silenced findings, and JSON lists them under `suppressed`. SARIF carries the count in the run properties and leaves them out of the results, because GitHub does not honor SARIF suppressions. `--no-ignore-comments` turns the comments off, for auditing code you do not trust.
+- Settings file. `.wpcoderscan.json` in the current directory, or the file given with `--config`, sets `failOn`, `strict`, `extended`, `lang`, `exclude`, `rules`, `baseline` and `ignoreComments`. A flag beats an environment variable, the variable beats the file and the file beats the default. The scanner never reads the file from the scanned code. `--no-config` skips it. An unknown option or a wrong type is an error with exit code 2. `exclude` takes `*`, `**` and `?` patterns relative to the file, and `rules` can only switch a rule off.
+- Every finding has a `fingerprint` in JSON. SARIF carries the same value in `wpcsFingerprint`. The second and later identical findings in a file get a suffix (`:2`, `:3`), so two identical lines no longer collapse into one alert in the Security tab. The value of the first one is unchanged, so alerts that exist today stay open.
+- The action has two new inputs, `baseline` and `config`. The `fail-on` and `lang` inputs no longer force a value when they are empty, so the settings file can set them. Without a settings file the behavior is the same as before (`high` and `en`).
+- `--fail-on=high`, with an equals sign, is accepted. Before, such a flag was ignored without a word, so `--fail-on=none` left the default gate on.
+- The 0.5.0 section of this file lost its heading in the previous release. It is back.
+
 ## 0.6.0
 
 Five new rules in `--extended` mode, for bugs that the scanner did not look for before.
@@ -17,6 +31,8 @@ The new rules look at file paths, outgoing HTTP requests, uploads, accounts and 
 - SARIF describes the new rules when the result contains them. Each new rule has a fix hint in English and in Polish.
 - The benchmark has a second set, `data/cves-extra.json` (326 CVE entries in 284 plugin versions, 302 pairs, 301 of them still download), and a script, `recall-extra.mjs`, that counts the hits with and without the new rules. `run.mjs` runs it together with the other measurements.
 - Known gap. CVE-2023-6827 (essential-real-estate 4.3.5) is missed, because the upload rule counts an extension check on zip entries after the save, followed by a delete, as validation.
+
+## 0.5.0
 
 Better recall on known vulnerabilities, with the same noise on popular plugins.
 

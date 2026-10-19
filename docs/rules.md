@@ -42,6 +42,16 @@ The five extended rules look at who can reach the code. Code that only an admini
 
 A nonce is not a gate, because every visitor gets one. `check_admin_referer()` checks a nonce, so it is not a gate either. A capability for an ordinary user (`edit_posts`) is not a gate. The scanner does not judge whether the check is correct, and it does not see a gate that sits in another file.
 
+## Suppressing findings
+
+A reviewed finding can be silenced in three ways, from narrow to wide.
+
+- An ignore comment next to the code: `// wpcoderscan-ignore wp.rce.dynamic -- reason`. The rule id is required. `wpcoderscan-ignore-file` covers the whole file.
+- A baseline file, which hides the findings that already existed when the gate was introduced.
+- The `rules` and `exclude` options in `.wpcoderscan.json`, which switch off a rule or skip paths for the whole project.
+
+The README describes each of them in [Adopt it in an existing codebase](../README.md#adopt-it-in-an-existing-codebase).
+
 ## wp.sqli.unprepared
 
 A `$wpdb` query built from user input without `prepare`. A superglobal directly in the query is a firm, critical finding. A variable fed from a superglobal is a heuristic with high severity. Plain variables and table names are not reported.
