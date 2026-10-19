@@ -12,6 +12,10 @@
 // nonce lub uprawnień (także w camelCase), i pomijamy uchwyty zamykające powiadomienie, baner albo wskazówkę.
 // Uprawnień nie wymagamy od uchwytu, który ten sam callback rejestruje też dla niezalogowanych, bo taki uchwyt
 // jest publiczny z założenia. Wyjątek nie obejmuje uchwytu, który zmienia opcje, konta, hasła, wtyczki, treść albo pliki.
+// Uchwytu nie zgłaszamy też w trzech przypadkach. Pierwszy to porównanie danych z żądania z sekretem zapisanym w opcji
+// albo transiencie, czyli token jednorazowy zamiast nonce. Drugi to callback z wymaganym parametrem, bo WordPress woła
+// haki admin_post_* i wp_ajax_* bez argumentów i takie wywołanie kończy się błędem. Trzeci to uchwyt, który tylko
+// usuwa transient pod stałym kluczem, czyli czyści pamięć podręczną.
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, nodeStart, offsetName, type AnyNode } from './ast-utils';
 import { enclosingClass, functionName, resolveMethodCallback, shortClassName, type MethodRef } from './callbacks';
@@ -73,8 +77,9 @@ const WPDB_WRITES = new Set(['query', 'insert', 'update', 'delete', 'replace']);
 
 // Pomocnicy o takich nazwach najpewniej sprawdzają nonce albo uprawnienia. Nazwy, które tylko brzmią podobnie,
 // nie liczą się: wp_get_current_user, get_current_user_id, wp_get_referer, is_admin (to pytanie o obszar
-// administracyjny, nie o prawa), get_the_author, get_access_token, wp_kses_allowed_html.
-const GUARD_NAME = /nonce|(?<!get_)referer|security|verify|permission|permit|authori[sz]|capabilit|user_can|is_user_logged_in|has_cap|before_running|current_user_(?:can|is|has)|is_current_user|auth(?!or)|access(?!_token)|(?:is|user|check|has|ip|role)_allowed|allowed_(?:user|role|to|ip)|(?:^|_)can_|is_admin_user|is_admin_role|user_is_admin|is_administrator|is_super_admin|valid\w*_?ajax/i;
+// administracyjny, nie o prawa), get_the_author, get_access_token, wp_kses_allowed_html. Nazwa legit (is_legit_ajax_call)
+// to pomocnik sprawdzający, czy żądanie jest prawidłowe.
+const GUARD_NAME = /legit|nonce|(?<!get_)referer|security|verify|permission|permit|authori[sz]|capabilit|user_can|is_user_logged_in|has_cap|before_running|current_user_(?:can|is|has)|is_current_user|auth(?!or)|access(?!_token)|(?:is|user|check|has|ip|role)_allowed|allowed_(?:user|role|to|ip)|(?:^|_)can_|is_admin_user|is_admin_role|user_is_admin|is_administrator|is_super_admin|valid\w*_?ajax/i;
 
 // Nazwa w camelCase (isUserAllowedToEdit) dostaje te same wzorce co nazwa w snake_case (is_user_allowed_to_edit).
 function snakeCase(name: string): string {
@@ -111,6 +116,15 @@ const UI_HOOK = /dismiss|notice|banner|pointer|welcome|tooltip|promo|remind|neve
 // Zapisy metadanych i opcji użytkownika, z identyfikatorem użytkownika w pierwszym argumencie i kluczem w drugim.
 // Zapis do konta zalogowanego użytkownika zmienia tylko jego własne dane.
 const USER_SCOPED_WRITES = new Set(['update_user_meta', 'add_user_meta', 'delete_user_meta', 'update_user_option', 'delete_user_option']);
+
+// Usunięcie transientu pod kluczem niezależnym od żądania to czyszczenie pamięci podręcznej. Uchwyt, który robi tylko to,
+// nie zmienia danych serwisu.
+const CACHE_WRITES = new Set(['delete_transient', 'delete_site_transient']);
+
+// Odczyty wartości zapisanej w bazie, z którą porównuje się dane z żądania. Wartość, którą żądanie musi znać, jest sekretem
+// (token jednorazowy), a samo porównanie robi to, co nonce.
+const STORED_READS = new Set(['get_option', 'get_site_option', 'get_transient', 'get_site_transient']);
+const COMPARISONS = new Set(['===', '!==', '==', '!=']);
 
 // Ile poziomów wołanych funkcji i metod z tego samego pliku sprawdzamy w poszukiwaniu nonce i uprawnień oraz ile
 // ich najwyżej. Zmianę stanu liczymy płycej, bo im dalej od uchwytu, tym słabszy ślad.
@@ -154,16 +168,19 @@ function isCurrentUserId(expr: AnyNode | undefined, userObjs: Set<string>): bool
 interface Write {
   ui: boolean; // zapis stanu interfejsu (UI_WRITES pod stałym kluczem)
   privileged: boolean; // zmiana, której nie robi publiczny formularz (PRIVILEGED_WRITES)
+  cache: boolean; // usunięcie transientu pod stałym kluczem (CACHE_WRITES)
 }
 
 interface Reach {
   writes: Write[];
   callsGuardHelper: boolean;
+  checksSecret: boolean; // dane z żądania porównane z wartością z opcji albo transientu
   hasNonce: boolean;
   hasCap: boolean;
   selfIds: Set<string>; // zmienne przypisane z identyfikatora zalogowanego użytkownika
   userObjs: Set<string>; // zmienne przypisane z wp_get_current_user()
   reqVars: Set<string>; // zmienne przypisane z wyrażenia, które sięga po dane z żądania
+  storedVars: Set<string>; // zmienne przypisane z wyrażenia, które czyta opcję albo transient
 }
 
 // Czy wyrażenie sięga po dane z żądania wprost albo przez zmienną przypisaną z takich danych.
@@ -177,6 +194,31 @@ function exprHasRequest(node: unknown, reqVars: Set<string>): boolean {
     if (exprHasRequest(n[k], reqVars)) return true;
   }
   return false;
+}
+
+// Czy wyrażenie czyta opcję albo transient wprost albo przez zmienną przypisaną z takiego odczytu.
+function exprHasStored(node: unknown, storedVars: Set<string>): boolean {
+  if (Array.isArray(node)) return node.some((x) => exprHasStored(x, storedVars));
+  const n = asNode(node);
+  if (!n) return false;
+  if (n.kind === 'variable' && typeof n.name === 'string' && storedVars.has(n.name)) return true;
+  if (n.kind === 'call') {
+    const fn = calledName(n);
+    if (fn && STORED_READS.has(fn)) return true;
+  }
+  for (const k of Object.keys(n)) {
+    if (SKIP_KEYS.has(k)) continue;
+    if (exprHasStored(n[k], storedVars)) return true;
+  }
+  return false;
+}
+
+// Czy dwie strony porównania to dane z żądania i sekret z bazy. Strona z bazy nie może sama zależeć od żądania,
+// bo wtedy żądanie wybiera, z czym jest porównywane.
+function comparesSecret(a: unknown, b: unknown, reach: Reach): boolean {
+  const request = (x: unknown) => exprHasRequest(x, reach.reqVars);
+  const secret = (x: unknown) => exprHasStored(x, reach.storedVars) && !request(x);
+  return (request(a) && secret(b)) || (secret(a) && request(b));
 }
 
 // Jeden przebieg po ciele zbiera fakty potrzebne do decyzji i wywołania, które trzeba jeszcze rozwiązać.
@@ -194,22 +236,27 @@ function inspect(node: unknown, reach: Reach, calls: AnyNode[]): void {
       if (NONCE_FUNCS.has(fn)) reach.hasNonce = true;
       else if (CAP_FUNCS.has(fn)) reach.hasCap = true;
       else if (isGuardName(rawCalledName(n) ?? fn, false)) reach.callsGuardHelper = true;
+      if (fn === 'hash_equals') {
+        const [known, given] = callArgs(n);
+        if (comparesSecret(known, given, reach)) reach.checksSecret = true;
+      }
       if (STATE_CHANGING.has(fn)) {
         const args = callArgs(n);
         const owner = args[0];
         const own = USER_SCOPED_WRITES.has(fn) && (isCurrentUserId(owner, reach.userObjs) || (owner?.kind === 'variable' && reach.selfIds.has(String(owner.name))));
         if (!own) {
           const key = USER_SCOPED_WRITES.has(fn) ? args[1] : owner;
-          reach.writes.push({ ui: UI_WRITES.has(fn) && !exprHasRequest(key, reach.reqVars), privileged: PRIVILEGED_WRITES.has(fn) });
+          const fixedKey = !exprHasRequest(key, reach.reqVars);
+          reach.writes.push({ ui: UI_WRITES.has(fn) && fixedKey, privileged: PRIVILEGED_WRITES.has(fn), cache: CACHE_WRITES.has(fn) && fixedKey });
         }
       }
     } else {
       const m = methodCallName(n);
       if (m) {
         if (isGuardName(m, true)) reach.callsGuardHelper = true;
-        if (STATE_METHODS.has(m)) reach.writes.push({ ui: false, privileged: PRIVILEGED_METHODS.has(m) });
+        if (STATE_METHODS.has(m)) reach.writes.push({ ui: false, privileged: PRIVILEGED_METHODS.has(m), cache: false });
       }
-      if (isWpdbWrite(n)) reach.writes.push({ ui: false, privileged: false });
+      if (isWpdbWrite(n)) reach.writes.push({ ui: false, privileged: false, cache: false });
     }
   } else if (n.kind === 'assign') {
     const left = asNode(n.left);
@@ -218,7 +265,10 @@ function inspect(node: unknown, reach: Reach, calls: AnyNode[]): void {
       if (isCurrentUserId(right, reach.userObjs)) reach.selfIds.add(left.name);
       if (right?.kind === 'call' && calledName(right) === 'wp_get_current_user') reach.userObjs.add(left.name);
       if (exprHasRequest(n.right, reach.reqVars)) reach.reqVars.add(left.name);
+      if (exprHasStored(n.right, reach.storedVars)) reach.storedVars.add(left.name);
     }
+  } else if (n.kind === 'bin' && COMPARISONS.has(String(n.type))) {
+    if (comparesSecret(n.left, n.right, reach)) reach.checksSecret = true;
   } else if (n.kind === 'propertylookup') {
     // $user->roles i $user->allcaps: sprawdzenie roli napisane ręcznie.
     const prop = offsetName(n.offset);
@@ -246,8 +296,19 @@ interface Handler {
   callbackName?: string;
   methodRef?: MethodRef;
   body?: unknown;
+  closure?: AnyNode; // domknięcie albo funkcja strzałkowa, z której pochodzi body
   cls?: string; // klasa otaczająca domknięcie, żeby rozwiązać $this
   node: AnyNode;
+}
+
+// Czy funkcja albo metoda ma parametr bez wartości domyślnej, który nie jest wariadyczny. WordPress woła haki
+// admin_post_* i wp_ajax_* bez argumentów, więc takie wywołanie kończy się błędem ArgumentCountError.
+function hasRequiredParam(def: AnyNode | undefined): boolean {
+  const params = def && Array.isArray(def.arguments) ? (def.arguments as unknown[]) : [];
+  return params.some((p) => {
+    const param = asNode(p);
+    return param?.kind === 'parameter' && !param.value && !param.variadic;
+  });
 }
 
 type MethodTable = Map<string, Map<string, AnyNode>>;
@@ -327,7 +388,7 @@ export const nonceCapabilityRule: Rule = {
       const cb = asNode(args[1]);
       if (!cb) return;
       if (cb.kind === 'closure' || cb.kind === 'arrowfunc') {
-        handlers.push({ hook: hookNode.value, kind, body: cb.body ?? cb, cls: enclosingClass(stack), node: n });
+        handlers.push({ hook: hookNode.value, kind, body: cb.body ?? cb, closure: cb, cls: enclosingClass(stack), node: n });
       } else if (cb.kind === 'string' && typeof cb.value === 'string' && !cb.value.includes('::')) {
         const callbackName = cb.value.replace(/^\\/, '').toLowerCase();
         handlers.push({ hook: hookNode.value, kind, key: 'fn:' + callbackName, callbackName, node: n });
@@ -341,7 +402,17 @@ export const nonceCapabilityRule: Rule = {
 
     // Fakty z uchwytu i z funkcji oraz metod z tego samego pliku, które woła.
     const reachOf = (body: unknown, cls: string | undefined): Reach => {
-      const reach: Reach = { writes: [], callsGuardHelper: false, hasNonce: false, hasCap: false, selfIds: new Set(), userObjs: new Set(), reqVars: new Set() };
+      const reach: Reach = {
+        writes: [],
+        callsGuardHelper: false,
+        checksSecret: false,
+        hasNonce: false,
+        hasCap: false,
+        selfIds: new Set(),
+        userObjs: new Set(),
+        reqVars: new Set(),
+        storedVars: new Set(),
+      };
       const seen = new Set<unknown>([body]);
       let frontier: Array<{ body: unknown; cls?: string; fed: boolean; params: string[] }> = [{ body, cls, fed: true, params: [] }];
       for (let depth = 0; depth <= MAX_DEPTH && frontier.length > 0; depth++) {
@@ -412,9 +483,12 @@ export const nonceCapabilityRule: Rule = {
         where = fn;
       }
       if (!body) continue;
+      if (hasRequiredParam(h.closure ?? where)) continue;
 
       const reach = reachOf(body, cls);
-      if (reach.writes.length === 0 || reach.callsGuardHelper) continue;
+      if (reach.writes.length === 0 || reach.callsGuardHelper || reach.checksSecret) continue;
+      // Samo czyszczenie pamięci podręcznej nie zmienia danych serwisu.
+      if (reach.writes.every((w) => w.cache)) continue;
       // Zamknięcie powiadomienia, banera albo wskazówki zapisuje stan interfejsu. To nie jest luka w dostępie.
       if (UI_HOOK.test(h.hook) && reach.writes.every((w) => w.ui)) continue;
 
