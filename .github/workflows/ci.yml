@@ -96,7 +96,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Write a settings file
-        run: echo '{ "failOn": "none" }' > .wpcoderscan.json
+        run: |
+          echo '{ "failOn": "none" }' > .wpcoderscan.json
       - uses: ./
         with:
           path: test/fixtures/vulnerable
