@@ -44,9 +44,17 @@ const SECRET_NAME = /(pass(word|wd|phrase)|secret|api[_-]?key|access[_-]?token|a
 // Nazwa wygląda jak identyfikator (zmienna, stała, klucz tablicy), nie jak etykieta dla człowieka.
 const IDENTIFIER_LIKE = /^[A-Za-z_][\w-]*$/;
 
+// Wartość to nazwa opcji, klucz konfiguracji albo ścieżka, a nie token: małe litery i cyfry rozdzielone znakami
+// _ . - albo /, z jednym słowem z co najmniej czterech liter i bez długiej serii cyfr (ai1wm_secret_key,
+// cdn.s3.secret, /oauth2/v2.0/token). Losowy token albo hasło z rokiem nie mają takiego kształtu.
+function looksLikeName(value: string): boolean {
+  return /^[a-z0-9_./-]+$/.test(value) && /[_./-]/.test(value) && /[a-z]{4}/.test(value) && !/\d{3}/.test(value);
+}
+
 // Wartość wygląda jak token: bez spacji, bez cudzysłowów, co najmniej litera i cyfra.
 function looksLikeToken(value: string): boolean {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false; // adres URL, nie sekret
+  if (looksLikeName(value)) return false;
   return value.length >= 12 && !/\s/.test(value) && /[A-Za-z]/.test(value) && /\d/.test(value);
 }
 
