@@ -1,10 +1,11 @@
-# Przykładowy workflow GitHub Actions dla WPCoderScan.
-# Skopiuj ten plik do .github/workflows/ w swoim repozytorium wtyczki lub motywu.
+# Example GitHub Actions workflow for WPCoderScan.
+# Copy this file to .github/workflows/ in your plugin or theme repository.
 #
-# Akcja buduje skaner ze źródeł wskazanego tagu, więc nie wymaga pakietu npm.
-# Przypnij konkretny tag albo SHA, żeby wynik skanu był powtarzalny.
+# The action builds the scanner from the source at the tag you pin, so it does
+# not need the npm package. Pin a specific tag or SHA to keep scan results
+# reproducible.
 
-name: Skan bezpieczeństwa WPCoderScan
+name: WPCoderScan security scan
 
 on:
   push:
@@ -12,7 +13,7 @@ on:
 
 permissions:
   contents: read
-  security-events: write # wymagane do wysyłki SARIF do zakładki Security
+  security-events: write # needed to upload SARIF to the Security tab
 
 jobs:
   scan:
@@ -20,10 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Przy znalezisku pewnym na poziomie high lub wyższym krok kończy się
-      # błędem i oblewa check. SARIF trafia do zakładki Security także wtedy.
-      - uses: wpcoder23/wpcoderscan@v0.3.2
+      # A firm finding at the high level or above fails this step and the
+      # check. SARIF is uploaded to the Security tab in that case too.
+      - uses: wpcoder23/wpcoderscan@v0.4.0
         with:
           path: .
           fail-on: high
           strict: 'false'
+          # lang: pl   # Polish messages (default: en)

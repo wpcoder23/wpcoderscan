@@ -1,112 +1,124 @@
 # WPCoderScan
 
 [![npm](https://img.shields.io/npm/v/wpcoderscan.svg)](https://www.npmjs.com/package/wpcoderscan)
+[![CI](https://github.com/wpcoder23/wpcoderscan/actions/workflows/ci.yml/badge.svg)](https://github.com/wpcoder23/wpcoderscan/actions/workflows/ci.yml)
 
-Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtyczek, motywów i integracji, zanim trafią na produkcję. Narzędzie dla deweloperów, vendorów i agencji, na czasy kodu generowanego przez AI.
+Security scanner for WordPress and PHP code. It finds vulnerabilities in plugins, themes and integrations before they reach production. Built for developers, vendors and agencies, in the age of AI-generated code.
 
-To wczesny etap (v0.3.2). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
+English | [Polski](README.pl.md)
 
-## Szybki start
+This is an early release (v0.4.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
 
-Wymagany Node.js 18 lub nowszy. Skaner nie uruchamia kodu PHP. Czyta i parsuje pliki, więc można go bezpiecznie puścić na cudzym kodzie.
+## Quick start
+
+Requires Node.js 18 or newer. The scanner never executes PHP. It reads and parses files, so it is safe to run on code you do not trust.
 
 ```bash
-npx wpcoderscan ./sciezka-do-wtyczki
+npx wpcoderscan ./path-to-plugin
 ```
 
-Możesz też zainstalować go globalnie:
+You can also install it globally:
 
 ```bash
 npm i -g wpcoderscan
-wpcoderscan ./sciezka-do-wtyczki
+wpcoderscan ./path-to-plugin
 ```
 
-Wersję sprawdzisz przez `--version`. Ten sam skaner uruchomisz też prosto z GitHuba, bez pakietu npm:
+Check the version with `--version`. The same scanner runs straight from GitHub, without the npm package:
 
 ```bash
-npx github:wpcoder23/wpcoderscan ./sciezka-do-wtyczki
+npx github:wpcoder23/wpcoderscan ./path-to-plugin
 ```
 
-albo z lokalnej kopii repozytorium:
+or from a local clone of the repository:
 
 ```bash
 git clone https://github.com/wpcoder23/wpcoderscan.git
 cd wpcoderscan
 npm install
-node dist/cli.js ./sciezka-do-wtyczki --json
+node dist/cli.js ./path-to-plugin --json
 ```
 
-## Co wykrywa
+## What it detects
 
-Skaner pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w obrębie jednej funkcji. Zmienna przypisana z `$_GET` jest skażona, a po rzutowaniu na liczbę, `absint`, `esc_sql` czy `escapeshellarg` już nie.
+The scanner covers eight classes of vulnerabilities. The rules follow user input within a single function. A variable assigned from `$_GET` is tainted. After a numeric cast, `absint`, `esc_sql` or `escapeshellarg` it is not.
 
-Za dane od użytkownika skaner uznaje:
+The scanner treats these as user input:
 
-- superglobale (`$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`, `$_SERVER`, `$_FILES`),
-- `filter_input`, `filter_input_array` bez filtra czyszczącego oraz `php://input`,
-- obiekt żądania REST (`$request->get_param()`, `$request['x']`), jako heurystykę, bo trasa mogła zwalidować argumenty,
-- atrybuty shortcode (`$atts` oraz klucze z `shortcode_atts`), jako źródło zapisanego XSS,
-- `add_query_arg` i `remove_query_arg` bez podanego adresu, w regule XSS.
+- superglobals (`$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`, `$_SERVER`, `$_FILES`),
+- `filter_input` and `filter_input_array` without a sanitizing filter, and `php://input`,
+- the REST request object (`$request->get_param()`, `$request['x']`), as a heuristic, because the route may have validated its arguments,
+- shortcode attributes (`$atts` and the keys from `shortcode_atts`), as a source of stored XSS,
+- `add_query_arg` and `remove_query_arg` without an explicit URL, in the XSS rule.
 
-Elementy tablicy są śledzone po literalnym kluczu, więc `$a['x']` z `$_GET` nie skazi `$a['y']`.
+Array elements are tracked by their literal key, so `$a['x']` taken from `$_GET` does not taint `$a['y']`.
 
-Zmienna sprawdzona przed użyciem przestaje być skażona. Skaner uznaje za sprawdzenie `in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, `is_numeric`, zakotwiczone wyrażenie regularne i porównanie z literałem. Działa to w ciele `if`, w gałęzi `else` po negacji oraz po wczesnym wyjściu (`return`, `die`, `wp_die`). Skaner nie ocenia, czy lista dozwolonych wartości jest poprawna.
+A variable checked before use stops being tainted. The scanner accepts `in_array`, `array_key_exists`, `isset` on an array keyed by a variable, `ctype_*`, `is_numeric`, an anchored regular expression and a comparison with a literal. This works in the body of an `if`, in the `else` branch after a negation, and after an early exit (`return`, `die`, `wp_die`). The scanner does not judge whether the allowlist itself is correct.
 
-- SQL injection: zapytania `$wpdb` budowane bez `prepare` z danych użytkownika. Superglobal wprost w zapytaniu jest pewny, zmienna zasilona superglobalem to heurystyka.
-- REST: trasa bez `permission_callback` (pewne). `__return_true` na trasie zmieniającej dane (heurystyka). Trasy tylko do odczytu pomijamy.
-- RCE: `eval`, `include` i `require` ze ścieżką od użytkownika, backticki, rodzina `exec` i `shell_exec`. Dane z superglobala wprost są pewne, przez zmienną to heurystyka.
-- Deserializacja: `unserialize` i `maybe_unserialize` na superglobalu (pewne).
-- Opcje: `register_setting` bez `sanitize_callback` (pewne).
-- Sekrety: klucze dostawców (AWS, Stripe, GitHub, Slack, SendGrid, klucz prywatny z treścią) jako pewne. Klucz API Google i wykrycie po nazwie zmiennej jako heurystyka, bo klucze do map bywają publiczne z założenia.
-- XSS: dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` oraz w wartości zwracanej przez shortcode, bez `esc_*`, `wp_kses`, `sanitize_*` ani rzutowania (heurystyka).
-- Nonce i uprawnienia: uchwyty `admin_post_*` i `wp_ajax_*`, które zmieniają stan bez weryfikacji nonce albo bez `current_user_can` (heurystyka). Uchwytem może być funkcja, domknięcie albo metoda klasy z tego samego pliku. Brak uprawnień przy obecnym nonce to poziom średni, a brak obu zabezpieczeń to wysoki.
+- SQL injection: `$wpdb` queries built from user input without `prepare`. A superglobal directly in the query is firm. A variable fed from a superglobal is a heuristic.
+- REST: a route without `permission_callback` (firm). `__return_true` on a route that changes data (heuristic). Read-only routes are skipped.
+- RCE: `eval`, `include` and `require` with a path from the user, backticks, the `exec` and `shell_exec` family. Data straight from a superglobal is firm, data through a variable is a heuristic.
+- Deserialization: `unserialize` and `maybe_unserialize` on a superglobal (firm).
+- Options: `register_setting` without `sanitize_callback` (firm).
+- Secrets: provider keys (AWS, Stripe, GitHub, Slack, SendGrid, a private key with its body) are firm. A Google API key and detection by variable name are heuristics, because browser maps keys are often public by design.
+- XSS: user input in `echo`, `print`, `printf`, `die`, `wp_die` and in the value returned by a shortcode, without `esc_*`, `wp_kses`, `sanitize_*` or a cast (heuristic).
+- Nonce and capabilities: `admin_post_*` and `wp_ajax_*` handlers that change state without a nonce check or without `current_user_can` (heuristic). The handler can be a function, a closure or a class method from the same file. A missing capability check with a nonce present is medium severity, and missing both is high.
 
-Tryb rozszerzony (`--extended`) dodaje regułę `wp.sqli.param_unprepared`: parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących, więc to ostrzeżenie średniego poziomu, domyślnie wyłączone. Tak wygląda wiele historycznych podatności SQL injection, a zarazem sporo bezpiecznego kodu, dlatego trzeba o nią poprosić.
+Extended mode (`--extended`) adds the rule `wp.sqli.param_unprepared`: a function parameter concatenated into a `$wpdb` query without `prepare`. The scanner cannot see the callers, so this is a medium-severity warning and it is off by default. It matches many historical SQL injection bugs and also a lot of safe code, so you have to ask for it.
 
-Pełny opis każdej reguły z przykładami podatnego i poprawnego kodu jest w [docs/reguly.md](docs/reguly.md).
+A full description of every rule with vulnerable and correct code examples is in [docs/rules.md](docs/rules.md).
 
-Każde znalezisko dostaje poziom (krytyczny, wysoki, średni, niski), poziom pewności, miejsce w kodzie i wskazówkę naprawy. Wyniki mapujemy na OWASP ASVS i CWE.
+Every finding gets a severity (critical, high, medium, low), a confidence level, a location in the code and a fix hint. Results are mapped to OWASP ASVS and CWE.
 
-Skaner pomija katalogi `vendor`, `vendor-prefixed`, `node_modules`, `.git`, `dist` i `build`.
+The scanner skips the directories `vendor`, `vendor-prefixed`, `node_modules`, `.git`, `dist` and `build`.
 
-## Pewność i bramka CI
+## Confidence and the CI gate
 
-Każde znalezisko ma poziom pewności. Znaleziska **pewne** (firm) są strukturalnie jednoznaczne i łamią build. Znaleziska **heurystyczne** mogą dać fałszywy alarm, więc domyślnie tylko ostrzegają i nie wywalają CI. Flaga `--strict` sprawia, że do kodu wyjścia liczą się też heurystyki.
+Every finding has a confidence level. **Firm** findings are structurally unambiguous and fail the build. **Heuristic** findings can be false alarms, so by default they only warn and do not fail CI. The `--strict` flag makes heuristics count toward the exit code too.
 
-`wpcoderscan` zwraca kod `1`, gdy znajdzie podatność o poziomie wskazanym w `--fail-on` (domyślnie `high`) lub cięższym, z uwzględnieniem powyższej zasady pewności. Dzięki temu wpina się w CI jako bramka. Kod `2` oznacza błąd działania skanera.
+`wpcoderscan` exits with code `1` when it finds a vulnerability at the level set by `--fail-on` (default `high`) or higher, following the confidence rule above. That makes it usable as a CI gate. Code `2` means a scanner error or a bad argument.
 
-## Ograniczenia
+## Language
 
-Analiza danych działa w obrębie jednej funkcji i jednego pliku. Nie śledzi przepływu między funkcjami ani plikami i nie zna własnych funkcji czyszczących projektu. Callbacki rejestrowane w innym pliku niż ich definicja zostają nierozwiązane. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
+Output is in English by default. Polish is available with `--lang pl` or the environment variable `WPCODERSCAN_LANG=pl`. The flag wins over the variable. The language applies to the terminal report, JSON and SARIF messages, fix hints and errors. Rule IDs and JSON keys never change.
 
-## Podpowiedzi napraw
+```bash
+npx wpcoderscan ./path-to-plugin --lang pl
+```
 
-Dla dwóch reguł skaner umie podać gotową zmianę kodu: XSS w `echo` i `print` oraz `unserialize` na danych od użytkownika. Skaner niczego nie zapisuje w twoich plikach. Pokazuje zmianę albo zapisuje ją jako łatkę, a decyzja należy do ciebie.
+## Limitations
 
-- `--suggest` pokazuje przy znalezisku, co zmienić, jako linie przed i po.
-- `--patch naprawy.patch` zapisuje wszystkie pełne podpowiedzi jako łatkę. Uruchom skan z katalogu głównego repozytorium, a potem: `git apply --check naprawy.patch && git apply naprawy.patch`.
-- JSON zawiera pole `patch` przy znalezisku, a SARIF zawiera pole `fixes`.
+Data flow analysis works within a single function and a single file. It does not follow flow between functions or files and does not know a project's own sanitizing functions. Callbacks registered in a different file than their definition stay unresolved. No alarm does not prove that the code is safe. The scanner does not replace a code review or a penetration test.
 
-Skaner dobiera funkcję ucieczki do miejsca w HTML. W treści strony to `esc_html()`, w atrybucie w cudzysłowie `esc_attr()`, a w całym adresie `href` albo `src` `esc_url()`. Przy `unserialize` dopisuje `allowed_classes => false`. Zachowuje styl pliku: spacje w nawiasach, `array()` albo `[]`, końce linii CRLF.
+## Fix suggestions
 
-Każdą podpowiedź skaner sprawdza przed pokazaniem. Nakłada zmianę w pamięci, parsuje kod ponownie, skanuje go jeszcze raz i odrzuca podpowiedź, gdy znalezisko nie znika albo pojawia się nowe. Odrzuca ją także, gdy plik ma błędy składni.
+For two rules the scanner can produce a ready change: XSS in `echo` and `print`, and `unserialize` on user input. The scanner never writes to your files. It shows the change or saves it as a patch, and the decision is yours.
 
-Podpowiedzi nie dostaje nic, co wymaga decyzji o kontekście: skrypty, style, atrybuty zdarzeń, wartości bez cudzysłowu i adres, w którym dane stoją na początku, a dalej jest ciąg dalszy. Podpowiedź oznaczona jako "do decyzji" pojawia się tylko w `--suggest`. Nie trafia do łatki. Tak jest, gdy kontekstu HTML nie widać w kodzie, a skaner proponuje wtedy `esc_html()`.
+- `--suggest` shows what to change next to each finding, as before and after lines.
+- `--patch fixes.patch` saves all complete suggestions as one patch. Run the scan from the repository root, then: `git apply --check fixes.patch && git apply fixes.patch`.
+- JSON contains a `patch` field on a finding, and SARIF contains a `fixes` field.
 
-Wstrzyknięcia SQL, RCE, brak kontroli dostępu i zaszyte sekrety skaner celowo nie naprawia sam, bo poprawna zmiana zależy od projektu.
+The scanner picks the escaping function to match the place in the HTML. In page content that is `esc_html()`, in a quoted attribute `esc_attr()`, and for a whole `href` or `src` value `esc_url()`. For `unserialize` it adds `allowed_classes => false`. It keeps the file's style: spaces inside parentheses, `array()` or `[]`, CRLF line endings.
 
-## Formaty wyjścia
+The scanner verifies every suggestion before showing it. It applies the change in memory, parses the code again, scans it once more and drops the suggestion if the finding does not disappear or a new one appears. It also drops it when the file has syntax errors.
 
-- Terminal (domyślnie), czytelny raport z oceną.
-- `--json`, do dalszego przetwarzania.
-- `--sarif`, format SARIF 2.1.0 do zakładki Security w GitHub.
-- `--diff <ref>`, skan tylko plików PHP zmienionych wobec ref gita (szybki skan dla pull requestów).
-- `--suggest` i `--patch <plik>`, podpowiedzi napraw (opisane wyżej).
-- `--extended`, dodatkowe reguły o niższej precyzji (opisane wyżej).
+Anything that needs a decision about context gets no suggestion: scripts, styles, event attributes, unquoted values, and a URL where the data comes first and more text follows. A suggestion marked "needs a decision" appears only with `--suggest`. It never goes into the patch. This happens when the HTML context cannot be read from the code, and the scanner proposes `esc_html()`.
+
+SQL injection, RCE, missing access control and hardcoded secrets are deliberately not fixed by the scanner, because the correct change depends on the project.
+
+## Output formats
+
+- Terminal (default), a readable report with a score.
+- `--json`, for further processing.
+- `--sarif`, SARIF 2.1.0 for the GitHub Security tab.
+- `--diff <ref>`, scan only PHP files changed against a git ref (a fast scan for pull requests).
+- `--suggest` and `--patch <file>`, fix suggestions (described above).
+- `--extended`, additional rules with lower precision (described above).
+- `--lang <en|pl>`, output language (described above).
 
 ## GitHub Action
 
-Skan na każdym push i pull request, z wynikami w zakładce Security. Akcja buduje skaner ze źródeł repozytorium w wersji wskazanej tagiem, więc nie wymaga pakietu npm. Gotowy przykład jest w `examples/github-workflow.yml`. Pokaz na żywo, z wynikami w zakładce Security: [wpcoder23/wpcoderscan-demo](https://github.com/wpcoder23/wpcoderscan-demo). Minimalny workflow:
+Scan on every push and pull request, with results in the Security tab. The action builds the scanner from the repository source at the tag you pin, so it does not need the npm package. A ready example is in `examples/github-workflow.yml`. A live demo with results in the Security tab: [wpcoder23/wpcoderscan-demo](https://github.com/wpcoder23/wpcoderscan-demo). A minimal workflow:
 
 ```yaml
 permissions:
@@ -117,13 +129,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.3.2
+      - uses: wpcoder23/wpcoderscan@v0.4.0
         with:
           path: .
           fail-on: high
-          # extended: 'true'   # dodatkowe reguły o niższej precyzji
+          # extended: 'true'   # additional rules with lower precision
+          # lang: pl           # Polish messages (default: en)
 ```
 
-## Licencja
+## License
 
-Apache-2.0. Rdzeń jest otwarty. Adaptowane fragmenty z projektów MIT zachowują swoją notę licencyjną. Zobacz pliki `LICENSE` i `NOTICE`.
+Apache-2.0. The core is open. Adapted portions of MIT-licensed projects keep their own license notice. See the `LICENSE` and `NOTICE` files.
