@@ -264,11 +264,14 @@ An `admin_post_*` or `wp_ajax_*` handler, including the `nopriv` variants, that 
 
 The rule follows calls to functions and methods from the same file. It looks for a nonce or capability check up to three calls deep. It counts a state change in a helper only up to two calls deep, and only when the helper gets request data in an argument or reads `$_GET`, `$_POST`, `$_REQUEST` or `$_FILES` itself. A helper that only tidies the plugin's own data says nothing about who controls the handler.
 
-The rule skips three kinds of handlers.
+The rule skips six kinds of handlers.
 
-- Handlers that call a helper with a guard-like name, for example one containing `nonce`, `verify`, `permission`, `capability`, `can_`, `is_user_logged_in` or `validate_ajax`. The scanner reads snake_case and camelCase alike, so `isUserAllowedToEdit()` counts like `is_user_allowed_to_edit()`. Names that only sound similar do not count, for example `wp_get_current_user`, `get_access_token` or `wp_kses_allowed_html`.
+- Handlers that call a helper with a guard-like name, for example one containing `nonce`, `verify`, `permission`, `capability`, `can_`, `is_user_logged_in`, `validate_ajax` or `legit`. The scanner reads snake_case and camelCase alike, so `isUserAllowedToEdit()` counts like `is_user_allowed_to_edit()`. Names that only sound similar do not count, for example `wp_get_current_user`, `get_access_token` or `wp_kses_allowed_html`.
 - Handlers that write only to the profile of the logged-in user, such as `update_user_meta( get_current_user_id(), ... )`, or `update_user_option( $user->ID, ... )` after `$user = wp_get_current_user()`. They change only the caller's own data.
 - Handlers named like the dismissal of a notice, banner, tooltip or tour (for example `dismiss`, `notice`, `banner`, `pointer`, `welcome`, `promo`, `remind`) that only store an option, transient or user meta under a key that does not come from the request. They save interface state, not site data.
+- Handlers that compare request data with a secret stored in an option or a transient. This is a one-time token that does the job of a nonce. The comparison is `===`, `!==`, `==`, `!=` or `hash_equals`. One side has to come from the request. The other side has to read `get_option`, `get_site_option`, `get_transient` or `get_site_transient`, directly or through a variable, and it must not depend on the request. A hash of the stored value (`hash_hmac`) is fine.
+- Handlers whose callback has a required parameter, one without a default value that is not variadic. WordPress calls the `admin_post_*` and `wp_ajax_*` hooks without arguments, so the call ends in an `ArgumentCountError` before the callback changes anything.
+- Handlers that only delete a transient under a key that does not come from the request. That clears a cache and changes no site data.
 
 The rule does not ask for a capability check in a handler that the same file registers for both `wp_ajax_*` and `wp_ajax_nopriv_*` with the same callback. Such a handler is public by design, so only the nonce check counts. The exception ends when the handler changes something that an ordinary public form does not change: a site option, another account or its password, a role or capability, a plugin or theme, existing content or a file. A handler like that stays open to anonymous users through the `nopriv` hook, so the capability finding stays.
 
@@ -294,7 +297,7 @@ add_action( 'wp_ajax_demo_delete', function () {
 
 ## wp.option.no_sanitize_callback
 
-`register_setting` without `sanitize_callback`. The option value is saved without validation.
+`register_setting` without `sanitize_callback`. The option value is saved without validation. A third argument that is a callable array of two items without keys, such as `[ $this, 'sanitize' ]` or `array( __CLASS__, 'sanitize' )`, counts as a sanitize callback, because WordPress turns a callable third argument into `array( 'sanitize_callback' => $callable )`.
 
 ```php
 // Vulnerable
@@ -306,7 +309,7 @@ register_setting( 'demo_group', 'demo_option', array( 'sanitize_callback' => 'sa
 
 ## wp.secret.hardcoded
 
-Hardcoded secrets in code. Provider keys with a known format (AWS, Stripe live, GitHub, Slack, SendGrid, a private key with its body) are firm findings. A Google API key is a high-severity heuristic, because browser maps keys are often public by design while paid API keys share the same format. Detection by variable name (`password`, `secret`, `api_key` and similar) is a heuristic and needs a value that looks like a secret: at least 12 characters, letters and digits, no spaces, not a URL, not a placeholder.
+Hardcoded secrets in code. Provider keys with a known format (AWS, Stripe live, GitHub, Slack, SendGrid, a private key with its body) are firm findings. A Google API key is a high-severity heuristic, because browser maps keys are often public by design while paid API keys share the same format. Detection by variable name (`password`, `secret`, `api_key` and similar) is a heuristic and needs a value that looks like a secret: at least 12 characters, letters and digits, no spaces, not a URL, not a placeholder, and not shaped like a name. A name is lowercase letters and digits separated by `_`, `.`, `-` or `/`, with a word of four letters and no run of three digits (`my_plugin_secret_key`, `cdn.s3.secret`, `/oauth2/v2.0/token`). It is an option name, a configuration key or a path.
 
 ```php
 // Vulnerable

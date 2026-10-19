@@ -264,11 +264,14 @@ Uchwyt `admin_post_*` albo `wp_ajax_*`, także w wariancie `nopriv`, który zmie
 
 Reguła idzie za wywołaniami funkcji i metod z tego samego pliku. Nonce albo kontroli uprawnień szuka do trzech wywołań w głąb. Zmianę stanu w pomocniku liczy tylko do dwóch wywołań w głąb i tylko wtedy, gdy pomocnik dostaje dane z żądania w argumencie albo sam czyta `$_GET`, `$_POST`, `$_REQUEST` lub `$_FILES`. Pomocnik, który tylko porządkuje własne dane wtyczki, nie mówi nic o tym, kto steruje uchwytem.
 
-Reguła pomija trzy rodzaje uchwytów.
+Reguła pomija sześć rodzajów uchwytów.
 
-- Uchwyty, które wołają pomocnika o nazwie kontrolnej, na przykład zawierającej `nonce`, `verify`, `permission`, `capability`, `can_`, `is_user_logged_in` albo `validate_ajax`. Skaner czyta tak samo snake_case i camelCase, więc `isUserAllowedToEdit()` liczy się jak `is_user_allowed_to_edit()`. Nazwy, które tylko brzmią podobnie, nie liczą się. Są to na przykład `wp_get_current_user`, `get_access_token` i `wp_kses_allowed_html`.
+- Uchwyty, które wołają pomocnika o nazwie kontrolnej, na przykład zawierającej `nonce`, `verify`, `permission`, `capability`, `can_`, `is_user_logged_in`, `validate_ajax` albo `legit`. Skaner czyta tak samo snake_case i camelCase, więc `isUserAllowedToEdit()` liczy się jak `is_user_allowed_to_edit()`. Nazwy, które tylko brzmią podobnie, nie liczą się. Są to na przykład `wp_get_current_user`, `get_access_token` i `wp_kses_allowed_html`.
 - Uchwyty, które zapisują wyłącznie profil zalogowanego użytkownika, na przykład `update_user_meta( get_current_user_id(), ... )` albo `update_user_option( $user->ID, ... )` po `$user = wp_get_current_user()`. Zmieniają tylko dane wołającego.
 - Uchwyty o nazwie zamykającej powiadomienie, baner, wskazówkę albo przewodnik po panelu (na przykład `dismiss`, `notice`, `banner`, `pointer`, `welcome`, `promo`, `remind`), które zapisują opcję, transjent albo meta użytkownika pod kluczem niezależnym od żądania. Taki zapis pamięta stan interfejsu, a nie dane serwisu.
+- Uchwyty, które porównują dane z żądania z sekretem zapisanym w opcji albo transjencie. To token jednorazowy, który robi to, co nonce. Porównanie to `===`, `!==`, `==`, `!=` albo `hash_equals`. Jedna strona musi pochodzić z żądania. Druga musi czytać `get_option`, `get_site_option`, `get_transient` albo `get_site_transient`, wprost albo przez zmienną, i nie może zależeć od żądania. Skrót zapisanej wartości (`hash_hmac`) jest w porządku.
+- Uchwyty, których callback ma wymagany parametr, czyli bez wartości domyślnej i niewariadyczny. WordPress woła haki `admin_post_*` i `wp_ajax_*` bez argumentów, więc takie wywołanie kończy się błędem `ArgumentCountError`, zanim callback cokolwiek zmieni.
+- Uchwyty, które tylko usuwają transjent pod kluczem niezależnym od żądania. To czyszczenie pamięci podręcznej, które nie zmienia danych serwisu.
 
 Reguła nie żąda kontroli uprawnień w uchwycie, który ten sam plik rejestruje jednocześnie pod `wp_ajax_*` i `wp_ajax_nopriv_*` z tym samym callbackiem. Taki uchwyt jest publiczny z założenia, więc liczy się tylko nonce. Wyjątek kończy się, gdy uchwyt zmienia coś, czego nie zmienia zwykły publiczny formularz. Chodzi o opcję serwisu, konto innej osoby albo jej hasło, rolę lub uprawnienie, wtyczkę lub motyw, istniejącą treść albo plik. Taki uchwyt przez hak `nopriv` jest otwarty także dla niezalogowanych, więc zgłoszenie o uprawnieniach zostaje.
 
@@ -294,7 +297,7 @@ add_action( 'wp_ajax_demo_delete', function () {
 
 ## wp.option.no_sanitize_callback
 
-`register_setting` bez `sanitize_callback`. Wartość opcji jest zapisywana bez walidacji.
+`register_setting` bez `sanitize_callback`. Wartość opcji jest zapisywana bez walidacji. Trzeci argument, który jest tablicą callable z dwóch elementów bez kluczy, na przykład `[ $this, 'sanitize' ]` albo `array( __CLASS__, 'sanitize' )`, liczy się jako sanitize callback. WordPress zamienia taki trzeci argument na `array( 'sanitize_callback' => $callable )`.
 
 ```php
 // Podatne
@@ -306,7 +309,7 @@ register_setting( 'demo_group', 'demo_option', array( 'sanitize_callback' => 'sa
 
 ## wp.secret.hardcoded
 
-Zaszyte sekrety w kodzie. Klucze dostawców o znanym formacie (AWS, Stripe live, GitHub, Slack, SendGrid, klucz prywatny z treścią) są wykryciem pewnym. Klucz API Google to heurystyka o wysokim poziomie, bo klucze do map w przeglądarce bywają publiczne z założenia, a ten sam format mają klucze płatnych API. Wykrycie po nazwie zmiennej (`password`, `secret`, `api_key` i podobne) jest heurystyką i wymaga wartości, która wygląda na sekret: co najmniej 12 znaków, litery i cyfry, bez spacji, nie adres URL, nie tekst zastępczy.
+Zaszyte sekrety w kodzie. Klucze dostawców o znanym formacie (AWS, Stripe live, GitHub, Slack, SendGrid, klucz prywatny z treścią) są wykryciem pewnym. Klucz API Google to heurystyka o wysokim poziomie, bo klucze do map w przeglądarce bywają publiczne z założenia, a ten sam format mają klucze płatnych API. Wykrycie po nazwie zmiennej (`password`, `secret`, `api_key` i podobne) jest heurystyką i wymaga wartości, która wygląda na sekret: co najmniej 12 znaków, litery i cyfry, bez spacji, nie adres URL, nie tekst zastępczy i nie kształt nazwy. Nazwa to małe litery i cyfry rozdzielone znakami `_`, `.`, `-` albo `/`, ze słowem z czterech liter i bez serii trzech cyfr (`my_plugin_secret_key`, `cdn.s3.secret`, `/oauth2/v2.0/token`). To nazwa opcji, klucz konfiguracji albo ścieżka.
 
 ```php
 // Podatne
