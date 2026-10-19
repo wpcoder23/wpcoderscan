@@ -54,7 +54,7 @@ Pass a set with `--data cves-2026.json`. The rules for using them:
 - A set is measured with frozen rules, on a release build, never on a build in progress.
 - Only totals are recorded. The result files are not opened and the misses are not read.
 - No rule is tuned on a miss from these sets. Fixes come from the misses of the 2023 to 2025 sets.
-- Each release is measured once. 0.8.0 was measured on its release build. 0.7.0 was measured on the same sets during the work on 0.8.0, only to have a baseline, and only the totals were read.
+- Each release is measured once. 0.8.0 was measured on its release build. 0.7.0 was measured on the same sets during the work on 0.8.0, only to have a baseline, and only the totals were read. 0.8.1 was not run on the blind sets. It changes only precision, and another run would spend a set that has already informed a release decision.
 
 This is blind in one sense only. The bug classes repeat every year, so a rule written against 2023 to 2025 can still fit a 2026 bug, and that is what the test measures. But a set that has informed one release decision is no longer fresh for the next, so the sets lose value with each use. Treat the result as a better estimate than the visible sets, not as a clean one.
 
@@ -68,24 +68,24 @@ Two versions on the frozen list no longer download. On 2026-10-19 wordpress.org 
 
 ## Latest numbers
 
-Scanner 0.8.0 against 0.7.0. Every count is a unique pair of a CVE and a plugin version.
+Scanner 0.8.0 against 0.7.0. Every count is a unique pair of a CVE and a plugin version. Scanner 0.8.1 repeats the recall numbers of 0.8.0 exactly: on the visible sets it gains and loses no pair. The blind tables are 0.8.0 only. The noise and precision tables have a 0.8.1 column.
 
 ### Main set, visible
 
 The main set has 475 pairs: 445 CVE ids in 465 plugin versions. Another 17 versions could not be downloaded and are left out. The rules were written while this set was visible.
 
-| | 0.7.0 | 0.8.0 |
-| --- | --- | --- |
-| Default mode, near | 144 of 475 (30.3%) | 173 of 475 (36.4%) |
-| Default mode, func | 166 of 475 (34.9%) | 201 of 475 (42.3%) |
-| Default mode, file | 188 of 475 (39.6%) | 222 of 475 (46.7%) |
-| `--extended`, near | 162 of 475 (34.1%) | 191 of 475 (40.2%) |
-| `--extended`, func | 185 of 475 (38.9%) | 220 of 475 (46.3%) |
-| `--extended`, file | 214 of 475 (45.1%) | 248 of 475 (52.2%) |
-| Findings on 198 popular plugins | 579 | 517 |
-| Median findings per plugin | 1 | 0 |
-| 90th percentile | 6 | 6 |
-| Plugins without findings | 96 | 100 |
+| | 0.7.0 | 0.8.0 | 0.8.1 |
+| --- | --- | --- | --- |
+| Default mode, near | 144 of 475 (30.3%) | 173 of 475 (36.4%) | 173 of 475 (36.4%) |
+| Default mode, func | 166 of 475 (34.9%) | 201 of 475 (42.3%) | 201 of 475 (42.3%) |
+| Default mode, file | 188 of 475 (39.6%) | 222 of 475 (46.7%) | 222 of 475 (46.7%) |
+| `--extended`, near | 162 of 475 (34.1%) | 191 of 475 (40.2%) | 191 of 475 (40.2%) |
+| `--extended`, func | 185 of 475 (38.9%) | 220 of 475 (46.3%) | 220 of 475 (46.3%) |
+| `--extended`, file | 214 of 475 (45.1%) | 248 of 475 (52.2%) | 248 of 475 (52.2%) |
+| Findings on 198 popular plugins | 579 | 517 | 403 |
+| Median findings per plugin | 1 | 0 | 0 |
+| 90th percentile | 6 | 6 | 4 |
+| Plugins without findings | 96 | 100 | 112 |
 
 The func numbers of 0.7.0 were measured afterwards on the frozen 0.7.0 build, because the metric did not exist when 0.7.0 was released. Its near and file numbers are the ones from its release.
 
@@ -152,19 +152,19 @@ In the visible set the func hits go from 16 (5.3%) to 68 (22.6%) and the file hi
 
 198 of the 200 plugins, 48 977 PHP files. Default mode, findings per rule:
 
-| Rule | 0.7.0 | 0.8.0 | Plugins in 0.8.0 |
-| --- | --- | --- | --- |
-| `wp.option.no_sanitize_callback` | 281 | 281 | 38 |
-| `wp.auth.unprotected_action` | 164 | 88 | 36 |
-| `wp.rest.no_permission_callback` | 47 | 47 | 25 |
-| `wp.xss.echo_superglobal` | 36 | 46 | 18 |
-| `wp.rce.dynamic` | 29 | 29 | 13 |
-| `wp.secret.hardcoded` | 18 | 18 | 12 |
-| `wp.sqli.unprepared` | 1 | 4 | 2 |
-| `wp.unserialize.user_input` | 3 | 4 | 2 |
-| All | 579 | 517 | 98 |
+| Rule | 0.7.0 | 0.8.0 | 0.8.1 | Plugins in 0.8.1 |
+| --- | --- | --- | --- | --- |
+| `wp.option.no_sanitize_callback` | 281 | 281 | 194 | 20 |
+| `wp.auth.unprotected_action` | 164 | 88 | 68 | 28 |
+| `wp.rest.no_permission_callback` | 47 | 47 | 47 | 25 |
+| `wp.xss.echo_superglobal` | 36 | 46 | 46 | 18 |
+| `wp.rce.dynamic` | 29 | 29 | 29 | 13 |
+| `wp.secret.hardcoded` | 18 | 18 | 11 | 8 |
+| `wp.sqli.unprepared` | 1 | 4 | 4 | 2 |
+| `wp.unserialize.user_input` | 3 | 4 | 4 | 2 |
+| All | 579 | 517 | 403 | 86 |
 
-With `--extended` on the same plugins, 0.8.0 gives 819 findings (0.7.0: 871). 124 plugins have a finding and 74 do not. The median is 1 and the 90th percentile is 10. The five rules of 0.6.0 give 52 of those findings in 23 plugins, and all of them are heuristics: 28 for file paths in 8 plugins, 8 for SSRF in 7, 10 for option names in 7, 6 for privilege escalation in 3 and none for uploads. The older extended rule `wp.sqli.param_unprepared` gives 250 findings in 49 plugins.
+With `--extended` on the same plugins, 0.8.1 gives 705 findings (0.8.0: 819, 0.7.0: 871). 116 plugins have a finding and 82 do not. The median is 1 and the 90th percentile is 9. The five rules of 0.6.0 give 52 of those findings in 23 plugins, and all of them are heuristics: 28 for file paths in 8 plugins, 8 for SSRF in 7, 10 for option names in 7, 6 for privilege escalation in 3 and none for uploads. The older extended rule `wp.sqli.param_unprepared` gives 250 findings in 49 plugins.
 
 ### Precision, judged by hand
 
@@ -190,11 +190,29 @@ The tables above count findings. They do not say how many are right. For 0.8.0 a
 Read the table with these limits in mind.
 
 - One reviewer judged the findings, and the same reviewer wrote the rules. A second reviewer would move some findings between "low risk" and "false alarm".
-- The 281 option findings were not read one by one. They were sorted by the shape of the `register_setting` call, and 20 were read by hand. 81 of them pass a callable array such as `[ $this, 'sanitize' ]` as the third argument. WordPress accepts a callable there and uses it as the sanitize callback (checked in the source of WordPress 6.9.4), so the rule is wrong for these 81. They are the largest single group of false alarms. The number 81 is a lower bound for that row.
+- The 281 option findings were not read one by one. They were sorted by the shape of the `register_setting` call, and 20 were read by hand. 81 of them pass a callable array such as `[ $this, 'sanitize' ]` as the third argument. WordPress accepts a callable there and uses it as the sanitize callback (checked in the source of WordPress 6.9.4), so the rule is wrong for these 81. They are the largest single group of false alarms. The number 81 was a lower bound for that row. The fix of 0.8.1 removes 87 findings of the rule, because six more have the same shape with a property or a variable as the object, for example `array( $this->callbacks, 'validate' )`.
 - The study covers the default mode. The 52 findings of the five `--extended` rules and the 250 of `wp.sqli.param_unprepared` were not read again.
 - The real weaknesses are mostly handlers that check a nonce but no capability. There is also a hardcoded encryption key and a shortcode attribute that reaches the page unescaped. The reviewer did not find one that lets an anonymous visitor take over a site. The plugins are not named here.
 
 So the shares are rough. About one finding in twenty is a real weakness, about two in three are accurate but low risk, and about one in four is a false alarm.
+
+#### After the fixes of 0.8.1
+
+The same verdicts give the table below for 0.8.1. It is not a new review. It counts which of the judged findings are gone. 114 of the 517 findings disappeared. 111 of them were false alarms and 3 were accurate findings of low risk. The 87 option findings that disappeared include the six that the sort by shape had put in the low-risk group, so 0.8.0 had 143 false alarms and not 137.
+
+| Rule | Findings | Real | Low risk | False alarm | Unclear |
+| --- | --- | --- | --- | --- | --- |
+| `wp.option.no_sanitize_callback` | 194 | 0 | 194 | 0 | 0 |
+| `wp.auth.unprotected_action` | 68 | 25 | 42 | 1 | 0 |
+| `wp.rest.no_permission_callback` | 47 | 0 | 47 | 0 | 0 |
+| `wp.xss.echo_superglobal` | 46 | 1 | 18 | 26 | 1 |
+| `wp.rce.dynamic` | 29 | 0 | 27 | 2 | 0 |
+| `wp.secret.hardcoded` | 11 | 1 | 10 | 0 | 0 |
+| `wp.sqli.unprepared` | 4 | 0 | 1 | 3 | 0 |
+| `wp.unserialize.user_input` | 4 | 0 | 4 | 0 | 0 |
+| All | 403 | 27 (6.7%) | 343 (85.1%) | 32 (7.9%) | 1 (0.2%) |
+
+None of the 27 real weaknesses is gone. The fixes were written to remove the false alarms that the review found, by the reviewer who judged them. A low share of false alarms is therefore expected, and it says nothing about code that was not reviewed. The 32 false alarms that remain are mostly XSS findings: output of arrays that the plugin owns, output of stored data and values cleaned in a way the scanner does not model.
 
 ## What these numbers do not say
 
@@ -206,6 +224,8 @@ So the shares are rough. About one finding in twenty is a real weakness, about t
 - Reflected and stored XSS make up most of the main set. Most of the XSS bugs that are still missed need the data flow across files, which the scanner does not follow.
 - The sample covers only CVEs that link to a Trac line. It is not a random sample of all plugin bugs.
 - Authorization pairs move in both directions between versions. Three pairs from 0.4.0 stopped being near hits in 0.5.0, because the rule started to report at the handler definition, not at the `add_action` line. In 0.8.0 two of them are near hits again: CVE-2025-5304 (project-notebooks 1.1.3) and CVE-2025-13403 (employee-spotlight 5.1.3). The third, CVE-2025-14366 (eyewear-prescription-form 6.0.1), is a func hit.
+- 0.8.1 gains and loses no pair on the visible sets. It was not run on the blind sets, so the blind numbers belong to 0.8.0. A fix could in principle cost a blind hit, for example a handler that compares request data with a stored value and is silenced by the new guard. The visible authorization pairs show no such loss.
+- The guards of 0.8.1 do not follow paths. A comparison of request data with a stored value counts as a guard wherever it sits in the reach of the handler, even when it guards only one path. Two accurate findings of low risk disappeared this way (a restore that resumes with a job id), and one more because a handler only cleared a transient. A weak password written as lowercase words with separators and no run of three digits is no longer reported by `wp.secret.hardcoded`.
 - 0.8.0 loses one pair of the main set: CVE-2025-11758 (aio-time-clock-lite 2.0.1). Its handlers are registered for visitors too, with the same callback, and the rule reads that as public by design.
 - The second set was visible while the five rules of 0.6.0 were tuned. The mapping from the CVE class to the rules was fixed before the first measurement, but the rules were adjusted afterwards to fit what the set showed. That is why the 2026 numbers are about half of the visible ones.
 - For five of the eight classes of the second set, and four of the seven in the 2026 set, the "before" column is zero by construction, because no rule existed. Only remote code execution, authentication bypass and privilege escalation compare old rules with new ones.

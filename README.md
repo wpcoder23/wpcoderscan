@@ -7,7 +7,7 @@ Security scanner for WordPress and PHP code. It finds vulnerabilities in plugins
 
 English | [Polski](README.pl.md)
 
-This is an early release (v0.8.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
+This is an early release (v0.8.1). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
 
 ## Quick start
 
@@ -99,12 +99,12 @@ npx wpcoderscan ./path-to-plugin --lang pl
 
 The scanner is measured on known vulnerabilities and on popular plugins. The main set has 475 pairs of a CVE and a vulnerable plugin version, from 2023 to 2025. The rules were written while this set was visible, so it shows how well they fit known bugs.
 
-- Default mode reports a finding of the right class within 25 lines of the CVE line in 173 of 475 cases (36.4%). With `--extended` it is 191 of 475 (40.2%).
-- A blind test uses 618 pairs from CVEs published in 2026. No rule was written against them. Default mode reports the right class within 25 lines of the CVE line in 80 cases (12.9%), and `--extended` in 129 (20.9%). Version 0.7.0 gets 73 (11.8%) and 121 (19.6%) on the same set. Expect numbers like these on new code. The visible set flatters the scanner.
+- Default mode reports a finding of the right class within 25 lines of the CVE line in 173 of 475 cases (36.4%). With `--extended` it is 191 of 475 (40.2%). Version 0.8.1 gives the same numbers, because it only removes findings.
+- A blind test uses 618 pairs from CVEs published in 2026. No rule was written against them. Version 0.8.0 reports the right class within 25 lines of the CVE line in 80 cases (12.9%) in the default mode, and in 129 (20.9%) with `--extended`. Version 0.7.0 gets 73 (11.8%) and 121 (19.6%) on the same set. Version 0.8.1 was not run on this set. Expect numbers like these on new code. The visible set flatters the scanner.
 - A second set of 301 pairs covers the classes of the five rules that `--extended` added in 0.6.0. With `--extended` the scanner reports the right class within 25 lines of the CVE line in 62 of 301 cases (20.6%). Without the new rules the same scan reports 14 (4.7%). The rules were tuned while this set was visible, so it is not a blind test. The same classes in the 2026 CVEs, 440 pairs, give 46 (10.5%) with the new rules and 13 (3.0%) without them.
-- On the 200 most popular free plugins from wordpress.org, 198 of which still download (49 thousand PHP files), 100 plugins have no finding in the default mode. The median is zero findings per plugin and the default mode prints 517 findings. With `--extended` the median is one, and the five new rules add 52 findings in 23 plugins.
+- On the 200 most popular free plugins from wordpress.org, 198 of which still download (49 thousand PHP files), 112 plugins have no finding in the default mode. The median is zero findings per plugin and the default mode prints 403 findings (517 in 0.8.0). With `--extended` the median is one, and the five new rules add 52 findings in 23 plugins.
 
-Many of the misses are XSS bugs whose data flow crosses files. The scanner follows calls only inside a file. About a quarter of the 517 findings on the popular plugins are false alarms, and about two thirds are accurate but low risk, for example a public endpoint that is public by design. Few are real weaknesses. A hand review counted them. The method, the counts, the data and the scripts are in [benchmark/](benchmark/README.md). You can run the measurements again.
+Many of the misses are XSS bugs whose data flow crosses files. The scanner follows calls only inside a file. A hand review of the 517 findings of 0.8.0 on the popular plugins found about a quarter false alarms and about two thirds accurate but low risk, for example a public endpoint that is public by design. Version 0.8.1 removes 111 of those false alarms. By the same review the 403 findings that remain are about 7% real weaknesses, 85% accurate but low risk and 8% false alarms. The reviewer also wrote the fixes, so read this as a count of what the review found. The method, the counts, the data and the scripts are in [benchmark/](benchmark/README.md). You can run the measurements again.
 
 ## Limitations
 
@@ -215,7 +215,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.8.0
+      - uses: wpcoder23/wpcoderscan@v0.8.1
         with:
           path: .
           fail-on: high

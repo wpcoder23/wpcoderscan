@@ -7,7 +7,7 @@ Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtycze
 
 [English](README.md) | Polski
 
-To wczesny etap (v0.8.0). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
+To wczesny etap (v0.8.1). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
@@ -99,12 +99,12 @@ npx wpcoderscan ./sciezka-do-wtyczki --lang pl
 
 Skaner mierzymy na znanych podatnościach i na popularnych wtyczkach. Główny zbiór ma 475 par: zgłoszenie CVE i podatna wersja wtyczki, lata 2023-2025. Reguły powstawały, gdy ten zbiór był widoczny, więc pokazuje on, jak dobrze pasują do znanych błędów.
 
-- Tryb domyślny zgłasza znalezisko właściwej klasy w odległości do 25 linii od linii z CVE w 173 z 475 przypadków (36,4%). Z `--extended` jest to 191 z 475 (40,2%).
-- Test ślepy używa 618 par z CVE opublikowanych w 2026 roku. Żadna reguła nie powstawała pod nie. Tryb domyślny zgłasza właściwą klasę w odległości do 25 linii od linii z CVE w 80 przypadkach (12,9%), a `--extended` w 129 (20,9%). Wersja 0.7.0 ma na tym samym zbiorze 73 (11,8%) i 121 (19,6%). Takich liczb należy się spodziewać na nowym kodzie. Zbiór widoczny pochlebia skanerowi.
+- Tryb domyślny zgłasza znalezisko właściwej klasy w odległości do 25 linii od linii z CVE w 173 z 475 przypadków (36,4%). Z `--extended` jest to 191 z 475 (40,2%). Wersja 0.8.1 daje te same liczby, bo tylko usuwa znaleziska.
+- Test ślepy używa 618 par z CVE opublikowanych w 2026 roku. Żadna reguła nie powstawała pod nie. Wersja 0.8.0 zgłasza właściwą klasę w odległości do 25 linii od linii z CVE w trybie domyślnym w 80 przypadkach (12,9%), a z `--extended` w 129 (20,9%). Wersja 0.7.0 ma na tym samym zbiorze 73 (11,8%) i 121 (19,6%). Wersji 0.8.1 na tym zbiorze nie uruchamiano. Takich liczb należy się spodziewać na nowym kodzie. Zbiór widoczny pochlebia skanerowi.
 - Drugi zbiór, 301 par, obejmuje klasy pięciu reguł, które `--extended` dostało w 0.6.0. Z `--extended` skaner zgłasza właściwą klasę w odległości do 25 linii od linii z CVE w 62 z 301 przypadków (20,6%). Bez nowych reguł ten sam skan zgłasza 14 (4,7%). Reguły strojono, gdy ten zbiór był widoczny, więc to nie jest test ślepy. Te same klasy w CVE z 2026 roku, 440 par, dają 46 (10,5%) z nowymi regułami i 13 (3,0%) bez nich.
-- Na 200 najpopularniejszych darmowych wtyczkach z wordpress.org, z których 198 da się jeszcze pobrać (49 tysięcy plików PHP), 100 wtyczek nie ma żadnego znaleziska w trybie domyślnym. Mediana to zero znalezisk na wtyczkę, a tryb domyślny wypisuje 517 znalezisk. Z `--extended` mediana wynosi jeden, a pięć nowych reguł dodaje 52 znaleziska w 23 wtyczkach.
+- Na 200 najpopularniejszych darmowych wtyczkach z wordpress.org, z których 198 da się jeszcze pobrać (49 tysięcy plików PHP), 112 wtyczek nie ma żadnego znaleziska w trybie domyślnym. Mediana to zero znalezisk na wtyczkę, a tryb domyślny wypisuje 403 znaleziska (w 0.8.0 było ich 517). Z `--extended` mediana wynosi jeden, a pięć nowych reguł dodaje 52 znaleziska w 23 wtyczkach.
 
-Wiele chybień to XSS, w którym dane przechodzą między plikami. Skaner śledzi wywołania tylko w obrębie pliku. Około jedna czwarta z 517 znalezisk na popularnych wtyczkach to fałszywe alarmy, a około dwie trzecie to znaleziska trafne, ale o niskim ryzyku, na przykład publiczny endpoint, który jest publiczny z założenia. Prawdziwych słabości jest niewiele. Policzył je ręczny przegląd. Metoda, liczby, dane i skrypty są w [benchmark/](benchmark/README.md). Możesz uruchomić pomiary ponownie.
+Wiele chybień to XSS, w którym dane przechodzą między plikami. Skaner śledzi wywołania tylko w obrębie pliku. Ręczny przegląd 517 znalezisk z 0.8.0 na popularnych wtyczkach wykazał około jednej czwartej fałszywych alarmów i około dwóch trzecich znalezisk trafnych, ale o niskim ryzyku, na przykład publiczny endpoint, który jest publiczny z założenia. Wersja 0.8.1 usuwa 111 z tych fałszywych alarmów. Według tego samego przeglądu 403 znaleziska, które zostają, to około 7% prawdziwych słabości, 85% znalezisk trafnych o niskim ryzyku i 8% fałszywych alarmów. Recenzent pisał też poprawki, więc czytaj to jako zliczenie tego, co wykazał przegląd. Metoda, liczby, dane i skrypty są w [benchmark/](benchmark/README.md). Możesz uruchomić pomiary ponownie.
 
 ## Ograniczenia
 
@@ -215,7 +215,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.8.0
+      - uses: wpcoder23/wpcoderscan@v0.8.1
         with:
           path: .
           fail-on: high

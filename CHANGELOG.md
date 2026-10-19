@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.1
+
+Fewer false alarms. The hits on the benchmark pairs do not change.
+
+On the 198 popular plugins the default mode prints 403 findings, down from 517, and 112 plugins have none, up from 100. The 90th percentile is 4, down from 6. With `--extended` it is 705 findings, down from 819. On the visible sets no pair is gained or lost: 173 of 475 in the default mode and 191 with `--extended`, as in 0.8.0. The blind sets were not run on this version, so the blind numbers of 0.8.0 stand.
+
+Of the 114 findings that disappeared, 111 were false alarms in the hand review of 0.8.0 and 3 were accurate findings of low risk. None of the 27 real weaknesses is gone. One reviewer did the review and also wrote these fixes. The counts say what the review found, not how the scanner does on code that was not reviewed.
+
+- `wp.option.no_sanitize_callback` accepts a callable array as the third argument of `register_setting`, for example `[ $this, 'sanitize' ]` or `array( __CLASS__, 'sanitize' )`. WordPress turns a callable third argument into `array( 'sanitize_callback' => $callable )`. This removes 87 findings. A positional array of one or three items, an arguments array with keys and no `sanitize_callback`, and a missing third argument are still reported.
+- `wp.auth.unprotected_action` skips three more kinds of handlers. The first compares request data with a secret stored in an option or a transient, such as a one-time token that does the job of a nonce, with `===`, `!==`, `==`, `!=` or `hash_equals`. The stored side may pass through a hash such as `hash_hmac`, and it must not depend on the request. The second has a callback with a required parameter. WordPress calls `admin_post_*` and `wp_ajax_*` hooks without arguments, so such a call ends in an `ArgumentCountError`. The third only deletes a transient under a key that does not come from the request.
+- `wp.auth.unprotected_action` reads a helper with `legit` in its name, such as `is_legit_ajax_call`, as a guard.
+- `wp.secret.hardcoded` does not report a value shaped like a name: lowercase letters and digits separated by `_`, `.`, `-` or `/`, with a word of four letters and no run of three digits. These are option names, configuration keys and paths. A random token, a license key in capitals and a password with a year are still reported.
+- Known gap. 32 false alarms from the review remain, 26 of them XSS findings on output of arrays that the plugin owns, on stored data and on values cleaned in a way the scanner does not model.
+- Known gap. The new guards of `wp.auth.unprotected_action` do not follow paths. A comparison of request data with a stored value counts wherever it sits in the reach of the handler. Three accurate findings of low risk disappeared through the new guards.
+- Known gap. A weak password written as lowercase words with separators and no run of three digits is no longer reported by `wp.secret.hardcoded`.
+
 ## 0.8.0
 
 More hits on known vulnerabilities, less noise from the authorization rule, and the first blind test.
