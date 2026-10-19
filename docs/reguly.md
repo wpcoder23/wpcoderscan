@@ -268,7 +268,7 @@ Reguła pomija trzy rodzaje uchwytów.
 - Uchwyty, które zapisują wyłącznie profil zalogowanego użytkownika, na przykład `update_user_meta( get_current_user_id(), ... )` albo `update_user_option( $user->ID, ... )` po `$user = wp_get_current_user()`. Zmieniają tylko dane wołającego.
 - Uchwyty o nazwie zamykającej powiadomienie, baner, wskazówkę albo przewodnik po panelu (na przykład `dismiss`, `notice`, `banner`, `pointer`, `welcome`, `promo`, `remind`), które zapisują opcję, transjent albo meta użytkownika pod kluczem niezależnym od żądania. Taki zapis pamięta stan interfejsu, a nie dane serwisu.
 
-Reguła nie żąda kontroli uprawnień w uchwycie, który ten sam plik rejestruje jednocześnie pod `wp_ajax_*` i `wp_ajax_nopriv_*` z tym samym callbackiem. Taki uchwyt jest publiczny z założenia, więc liczy się tylko nonce.
+Reguła nie żąda kontroli uprawnień w uchwycie, który ten sam plik rejestruje jednocześnie pod `wp_ajax_*` i `wp_ajax_nopriv_*` z tym samym callbackiem. Taki uchwyt jest publiczny z założenia, więc liczy się tylko nonce. Wyjątek kończy się, gdy uchwyt zmienia coś, czego nie zmienia zwykły publiczny formularz. Chodzi o opcję serwisu, konto innej osoby albo jej hasło, rolę lub uprawnienie, wtyczkę lub motyw, istniejącą treść albo plik. Taki uchwyt przez hak `nopriv` jest otwarty także dla niezalogowanych, więc zgłoszenie o uprawnieniach zostaje.
 
 Haki `init` i `admin_init` nie są sprawdzane. Test na popularnych wtyczkach dał tam szum i żadnej dodatkowej podatności.
 

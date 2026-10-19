@@ -11,7 +11,7 @@
 // użytkownika, wpisu, pliku albo bazy), pomijamy te, które wołają pomocnika o nazwie sugerującej sprawdzenie
 // nonce lub uprawnień (także w camelCase), i pomijamy uchwyty zamykające powiadomienie, baner albo wskazówkę.
 // Uprawnień nie wymagamy od uchwytu, który ten sam callback rejestruje też dla niezalogowanych, bo taki uchwyt
-// jest publiczny z założenia.
+// jest publiczny z założenia. Wyjątek nie obejmuje uchwytu, który zmienia opcje, konta, hasła, wtyczki, treść albo pliki.
 import { walk } from '../parser';
 import { asNode, calledName, callArgs, nodeStart, offsetName, type AnyNode } from './ast-utils';
 import { enclosingClass, functionName, resolveMethodCallback, shortClassName, type MethodRef } from './callbacks';
@@ -52,6 +52,21 @@ const STATE_CHANGING = new Set([
 const STATE_METHODS = new Set([
   'add_role', 'set_role', 'remove_role', 'add_cap', 'remove_cap', 'remove_all_caps', 'update_status', 'payment_complete',
 ]);
+
+// Zmiany stanu, których nie robi formularz dostępny dla wszystkich: opcje serwisu, konta innych osób, hasła, wtyczki
+// i motywy, kasowanie i zmiana treści oraz plików. Uchwyt z takim zapisem jest luką także wtedy, gdy ten sam callback
+// jest zarejestrowany dla niezalogowanych, bo to właśnie niezalogowany dostaje wtedy dostęp do tej zmiany.
+const PRIVILEGED_WRITES = new Set([
+  'update_option', 'add_option', 'delete_option', 'update_site_option', 'add_site_option', 'delete_site_option',
+  'update_blog_option', 'add_blog_option', 'delete_blog_option', 'update_network_option',
+  'wp_update_user', 'wp_delete_user', 'wp_set_password', 'reset_password', 'wp_reset_password',
+  'activate_plugin', 'deactivate_plugins', 'delete_plugins', 'switch_theme',
+  'wp_update_post', 'wp_delete_post', 'wp_trash_post', 'wp_untrash_post', 'wp_delete_attachment',
+  'wp_update_term', 'wp_delete_term', 'wp_update_comment', 'wp_delete_comment', 'wp_trash_comment',
+  'wp_untrash_comment', 'wp_spam_comment', 'wp_set_comment_status',
+  'unlink', 'rmdir', 'rename', 'copy', 'wp_delete_file',
+]);
+const PRIVILEGED_METHODS = new Set(['add_role', 'set_role', 'remove_role', 'add_cap', 'remove_cap', 'remove_all_caps']);
 
 // Metody $wpdb, które piszą do bazy.
 const WPDB_WRITES = new Set(['query', 'insert', 'update', 'delete', 'replace']);
@@ -135,8 +150,14 @@ function isCurrentUserId(expr: AnyNode | undefined, userObjs: Set<string>): bool
   return false;
 }
 
+// Jedna zmiana stanu widoczna z uchwytu.
+interface Write {
+  ui: boolean; // zapis stanu interfejsu (UI_WRITES pod stałym kluczem)
+  privileged: boolean; // zmiana, której nie robi publiczny formularz (PRIVILEGED_WRITES)
+}
+
 interface Reach {
-  writes: boolean[]; // jeden wpis na zmianę stanu: true, gdy to zapis stanu interfejsu (UI_WRITES pod stałym kluczem)
+  writes: Write[];
   callsGuardHelper: boolean;
   hasNonce: boolean;
   hasCap: boolean;
@@ -179,16 +200,16 @@ function inspect(node: unknown, reach: Reach, calls: AnyNode[]): void {
         const own = USER_SCOPED_WRITES.has(fn) && (isCurrentUserId(owner, reach.userObjs) || (owner?.kind === 'variable' && reach.selfIds.has(String(owner.name))));
         if (!own) {
           const key = USER_SCOPED_WRITES.has(fn) ? args[1] : owner;
-          reach.writes.push(UI_WRITES.has(fn) && !exprHasRequest(key, reach.reqVars));
+          reach.writes.push({ ui: UI_WRITES.has(fn) && !exprHasRequest(key, reach.reqVars), privileged: PRIVILEGED_WRITES.has(fn) });
         }
       }
     } else {
       const m = methodCallName(n);
       if (m) {
         if (isGuardName(m, true)) reach.callsGuardHelper = true;
-        if (STATE_METHODS.has(m)) reach.writes.push(false);
+        if (STATE_METHODS.has(m)) reach.writes.push({ ui: false, privileged: PRIVILEGED_METHODS.has(m) });
       }
-      if (isWpdbWrite(n)) reach.writes.push(false);
+      if (isWpdbWrite(n)) reach.writes.push({ ui: false, privileged: false });
     }
   } else if (n.kind === 'assign') {
     const left = asNode(n.left);
@@ -395,7 +416,7 @@ export const nonceCapabilityRule: Rule = {
       const reach = reachOf(body, cls);
       if (reach.writes.length === 0 || reach.callsGuardHelper) continue;
       // Zamknięcie powiadomienia, banera albo wskazówki zapisuje stan interfejsu. To nie jest luka w dostępie.
-      if (UI_HOOK.test(h.hook) && reach.writes.every(Boolean)) continue;
+      if (UI_HOOK.test(h.hook) && reach.writes.every((w) => w.ui)) continue;
 
       if (!reach.hasNonce) {
         emit(
@@ -406,8 +427,10 @@ export const nonceCapabilityRule: Rule = {
           ctx.t('auth.nonce.fix'),
         );
       }
-      // Uprawnień wymagamy tylko tam, gdzie działa zalogowany użytkownik.
-      if (h.kind === 'priv' && !reach.hasCap && !(h.key && publicKeys.has(h.key))) {
+      // Uprawnień wymagamy tylko tam, gdzie działa zalogowany użytkownik. Uchwyt publiczny z założenia dostaje wyjątek
+      // tylko wtedy, gdy nie zmienia nic, czego nie zmienia zwykły formularz.
+      const publicByDesign = !!h.key && publicKeys.has(h.key) && !reach.writes.some((w) => w.privileged);
+      if (h.kind === 'priv' && !reach.hasCap && !publicByDesign) {
         emit(
           where,
           ctx.t('auth.capability.message', { hook: h.hook }),

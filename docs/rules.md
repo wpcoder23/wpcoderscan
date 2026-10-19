@@ -268,7 +268,7 @@ The rule skips three kinds of handlers.
 - Handlers that write only to the profile of the logged-in user, such as `update_user_meta( get_current_user_id(), ... )`, or `update_user_option( $user->ID, ... )` after `$user = wp_get_current_user()`. They change only the caller's own data.
 - Handlers named like the dismissal of a notice, banner, tooltip or tour (for example `dismiss`, `notice`, `banner`, `pointer`, `welcome`, `promo`, `remind`) that only store an option, transient or user meta under a key that does not come from the request. They save interface state, not site data.
 
-The rule does not ask for a capability check in a handler that the same file registers for both `wp_ajax_*` and `wp_ajax_nopriv_*` with the same callback. Such a handler is public by design, so only the nonce check counts.
+The rule does not ask for a capability check in a handler that the same file registers for both `wp_ajax_*` and `wp_ajax_nopriv_*` with the same callback. Such a handler is public by design, so only the nonce check counts. The exception ends when the handler changes something that an ordinary public form does not change: a site option, another account or its password, a role or capability, a plugin or theme, existing content or a file. A handler like that stays open to anonymous users through the `nopriv` hook, so the capability finding stays.
 
 The `init` and `admin_init` hooks are not checked. A test on popular plugins gave noise there and no additional vulnerability.
 

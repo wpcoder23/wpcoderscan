@@ -480,8 +480,9 @@ describe('uchwyty publiczne z założenia', () => {
 add_action( 'wp_ajax_subscribe', 'subscribe' );
 add_action( 'wp_ajax_nopriv_subscribe', 'subscribe' );
 function subscribe() {
+	global $wpdb;
 	check_ajax_referer( 'subscribe' );
-	update_option( 'subscribers', $_POST['email'] );
+	$wpdb->insert( $wpdb->prefix . 'subscribers', array( 'email' => sanitize_email( $_POST['email'] ) ) );
 }`);
     expect(f).toHaveLength(0);
   });
@@ -491,7 +492,8 @@ function subscribe() {
 add_action( 'wp_ajax_subscribe', 'subscribe' );
 add_action( 'wp_ajax_nopriv_subscribe', 'subscribe' );
 function subscribe() {
-	update_option( 'subscribers', $_POST['email'] );
+	global $wpdb;
+	$wpdb->insert( $wpdb->prefix . 'subscribers', array( 'email' => sanitize_email( $_POST['email'] ) ) );
 }`);
     expect(f).toHaveLength(2);
     expect(f.every((x) => /nonce/.test(x.message))).toBe(true);
@@ -505,11 +507,54 @@ class Subscribe {
 		add_action( 'wp_ajax_nopriv_subscribe', array( $this, 'handle' ) );
 	}
 	public function handle() {
+		global $wpdb;
 		check_ajax_referer( 'subscribe' );
-		update_option( 'subscribers', $_POST['email'] );
+		$wpdb->insert( $wpdb->prefix . 'subscribers', array( 'email' => sanitize_email( $_POST['email'] ) ) );
 	}
 }`);
     expect(f).toHaveLength(0);
+  });
+
+  it('publiczny uchwyt, który zmienia opcję serwisu, nadal dostaje zgłoszenie o uprawnieniach', async () => {
+    const f = await auth(`<?php
+add_action( 'wp_ajax_subscribe', 'subscribe' );
+add_action( 'wp_ajax_nopriv_subscribe', 'subscribe' );
+function subscribe() {
+	check_ajax_referer( 'subscribe' );
+	update_option( 'subscribers', $_POST['email'] );
+}`);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toMatch(/capabilities/);
+  });
+
+  it('publiczny uchwyt, który nadaje rolę albo uprawnienie, nadal dostaje zgłoszenie o uprawnieniach', async () => {
+    const f = await auth(`<?php
+class Team {
+	public function __construct() {
+		add_action( 'wp_ajax_team_add', array( $this, 'add' ) );
+		add_action( 'wp_ajax_nopriv_team_add', array( $this, 'add' ) );
+	}
+	public function add() {
+		check_ajax_referer( 'team' );
+		$user = get_user_by( 'id', absint( $_POST['id'] ) );
+		$user->add_cap( 'manage_options' );
+	}
+}`);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toMatch(/capabilities/);
+  });
+
+  it('publiczny uchwyt, który ustawia hasło innego konta, nadal dostaje zgłoszenie o uprawnieniach', async () => {
+    const f = await auth(`<?php
+add_action( 'wp_ajax_reset_new_pass', 'reset_new_pass' );
+add_action( 'wp_ajax_nopriv_reset_new_pass', 'reset_new_pass' );
+function reset_new_pass() {
+	check_ajax_referer( 'reset' );
+	$user = get_user_by( 'email', sanitize_email( $_POST['user_email'] ) );
+	wp_set_password( sanitize_text_field( $_POST['new_pass'] ), $user->ID );
+}`);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toMatch(/capabilities/);
   });
 
   it('inny callback pod hakiem nopriv nie zwalnia uchwytu dla zalogowanych', async () => {
