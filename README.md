@@ -107,7 +107,7 @@ Many of the misses are XSS bugs whose data flow crosses files. The scanner follo
 
 ## Limitations
 
-Data flow analysis works inside a file. It follows calls between functions and methods of the same file, up to six levels deep. It does not follow flow between files and does not know a project's own sanitizing functions. Callbacks registered in a different file than their definition stay unresolved. No alarm does not prove that the code is safe. The scanner does not replace a code review or a penetration test.
+Data flow analysis works inside a file. It follows calls between functions and methods of the same file, up to six levels deep. It does not follow flow between files and does not know a project's own sanitizing functions. Callbacks registered in a different file than their definition stay unresolved. The scanner knows in which branch of an `if`, `switch`, loop or `catch` a write sits, but it does not evaluate conditions. A flag that picks the branch, and an early `return` or `exit` inside a branch, are not understood. No alarm does not prove that the code is safe. The scanner does not replace a code review or a penetration test.
 
 ## Fix suggestions
 

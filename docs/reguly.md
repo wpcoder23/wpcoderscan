@@ -12,7 +12,9 @@ Zmienna sprawdzona przed użyciem listą dozwolonych wartości przestaje być sk
 
 Wartość domyślna wpisana do elementu superglobala go nie czyści. `$_REQUEST['orderby'] = 'id'` w gałęzi `if ( empty( $_REQUEST['orderby'] ) )` zostawia wartość odwiedzającego w drugiej gałęzi, więc dalsza część funkcji nadal uznaje `$_REQUEST['orderby']` za dane użytkownika. Zapis, który sam czyta superglobal i go czyści (`$_GET['x'] = sanitize_text_field( $_GET['x'] )`, `(int) $_GET['x']`), nadal czyści.
 
-Nieznane funkcje nie przenoszą skażenia, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
+**Gałęzie.** Zapis w ciele `if`, w `case` instrukcji `switch`, w pętli albo w `catch` nie musi się wykonać. Oczyszczenie zmiennej w takiej gałęzi nie oczyszcza jej dla kodu za konstrukcją, chyba że warunek sprawdza właśnie tę zmienną (`if ( ! empty( $name ) ) { $name = esc_html( $name ); }`). Zapis w jednej gałęzi nie jest widoczny w drugiej. Późniejszy pełny zapis w tej samej gałęzi zastępuje jej wcześniejsze zapisy. Skażenie przypisane w gałęzi dociera do kodu za nią. Skaner nie śledzi warunków przez kod, więc flaga wybierająca gałąź nie jest rozumiana.
+
+Skażenie przenoszą funkcje, które zwracają fragment albo kopię argumentu. Są to funkcje tekstowe, takie jak `strtr`, `strstr`, `str_pad` i `wordwrap`, funkcje tablicowe, takie jak `array_shift`, `array_column` i `current`, oraz funkcje budujące ścieżki i adresy, takie jak `dirname`, `trailingslashit`, `admin_url` i `home_url`. Funkcje budujące adres przenoszą je tylko do znalezisk XSS. Host takiego adresu to twoja własna witryna, więc nie przenoszą go do znalezisk SSRF. Pozostałe nieznane funkcje nie przenoszą skażenia, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
 
 | Reguła | Poziom | Pewność | CWE | Podpowiedź naprawy |
 | --- | --- | --- | --- | --- |

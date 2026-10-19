@@ -12,7 +12,9 @@ A variable checked before use against an allowlist stops being tainted. The chec
 
 A default written into an element of a superglobal does not clear it. `$_REQUEST['orderby'] = 'id'` inside an `if ( empty( $_REQUEST['orderby'] ) )` branch leaves the visitor's value in the other branch, so the rest of the function still sees `$_REQUEST['orderby']` as user input. A write that reads the superglobal itself and cleans it (`$_GET['x'] = sanitize_text_field( $_GET['x'] )`, `(int) $_GET['x']`) still clears it.
 
-Unknown functions do not carry taint, so the scanner prefers to miss something over burying you in false alarms.
+**Branches.** A write inside the body of an `if`, a `switch` case, a loop or a `catch` is not certain to run. Cleaning a variable there does not clean it for the code after the construct, unless the condition tests that very variable (`if ( ! empty( $name ) ) { $name = esc_html( $name ); }`). A write in one branch is not visible in a sibling branch. A later full write in the same branch replaces the earlier writes of that branch. Taint assigned inside a branch reaches the code after it. The scanner does not follow conditions through the code, so a flag that picks the branch is not understood.
+
+Functions that return a piece or a copy of their argument carry taint: text functions such as `strtr`, `strstr`, `str_pad` and `wordwrap`, array functions such as `array_shift`, `array_column` and `current`, and path and address builders such as `dirname`, `trailingslashit`, `admin_url` and `home_url`. The address builders carry it only into XSS findings. The host of such an address is your own site, so they do not carry it into SSRF findings. Other unknown functions do not carry taint, so the scanner prefers to miss something over burying you in false alarms.
 
 | Rule | Severity | Confidence | CWE | Fix suggestion |
 | --- | --- | --- | --- | --- |

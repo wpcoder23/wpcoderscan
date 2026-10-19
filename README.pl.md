@@ -107,7 +107,7 @@ Wiele chybień to XSS, w którym dane przechodzą między plikami. Skaner śledz
 
 ## Ograniczenia
 
-Analiza danych działa w obrębie pliku. Śledzi wywołania funkcji i metod z tego samego pliku, do sześciu poziomów. Nie śledzi przepływu między plikami i nie zna własnych funkcji czyszczących projektu. Callbacki rejestrowane w innym pliku niż ich definicja zostają nierozwiązane. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
+Analiza danych działa w obrębie pliku. Śledzi wywołania funkcji i metod z tego samego pliku, do sześciu poziomów. Nie śledzi przepływu między plikami i nie zna własnych funkcji czyszczących projektu. Callbacki rejestrowane w innym pliku niż ich definicja zostają nierozwiązane. Skaner wie, w której gałęzi `if`, `switch`, pętli albo `catch` leży zapis, ale nie ocenia warunków. Flaga wybierająca gałąź oraz wczesny `return` albo `exit` w gałęzi nie są rozumiane. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
 
 ## Podpowiedzi napraw
 
