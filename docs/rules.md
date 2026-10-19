@@ -10,6 +10,8 @@ A numeric cast, `absint`, `intval`, `escapeshellarg` and `basename` remove the t
 
 A variable checked before use against an allowlist stops being tainted. The checks that count are `in_array`, `array_key_exists`, `isset` on an array keyed by a variable, `ctype_*`, `is_numeric`, an anchored regex, a regex that rejects any character outside a set, a comparison with a literal, and a call to a validator named like `is_valid_*`, `is_allowed_*` or `validate_*`. A check counts inside the `if` body, in the branches of a ternary and after an early exit.
 
+A default written into an element of a superglobal does not clear it. `$_REQUEST['orderby'] = 'id'` inside an `if ( empty( $_REQUEST['orderby'] ) )` branch leaves the visitor's value in the other branch, so the rest of the function still sees `$_REQUEST['orderby']` as user input. A write that reads the superglobal itself and cleans it (`$_GET['x'] = sanitize_text_field( $_GET['x'] )`, `(int) $_GET['x']`) still clears it.
+
 Unknown functions do not carry taint, so the scanner prefers to miss something over burying you in false alarms.
 
 | Rule | Severity | Confidence | CWE | Fix suggestion |
@@ -60,9 +62,12 @@ A `$wpdb` query built from user input without `prepare`. A superglobal directly 
 
 `esc_sql`, `addslashes` and `$wpdb->_escape` protect only text inside quotes. A value escaped this way but placed outside quotes is reported with high severity. That covers a number after `=`, a column name, `LIMIT`, `ORDER BY` and text between backticks. The finding is firm when the superglobal sits right in the expression. It is a heuristic when the data comes through a variable.
 
+The rule also reads the SQL that WordPress assembles for you. A function registered on `posts_where`, `posts_orderby`, `posts_join` and the related hooks (`posts_search`, `posts_groupby`, `posts_fields`, `posts_clauses`, `posts_request`, `terms_clauses`, `comments_clauses`) returns text that WordPress pastes into the query. User input in that value is reported. So is user input assigned to `query_where`, `query_orderby` and the other `query_*` properties of a query object (`pre_user_query`). The quoting rules above apply: `esc_sql` protects a value inside quotes and does not protect one outside them.
+
 ```php
 // Vulnerable
 $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders WHERE id = " . $_GET['id'] );
+add_filter( 'posts_orderby', function () { return $_GET['order']; } );
 $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY " . esc_sql( $_GET['orderby'] ) );
 
 // Correct
@@ -76,6 +81,8 @@ $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY $orderby" );
 User input in `echo`, `print`, `printf`, `die`, `wp_die` or in the value returned by a shortcode, without an escaping function. `json_encode` responses in `die`, `wp_die` and `printf` are skipped, because they are usually AJAX.
 
 The source can be a superglobal, `filter_input`, `add_query_arg` without a URL, or shortcode attributes. Shortcode attributes (`$atts`, the keys from `shortcode_atts` and `extract`) are written by the post author, so the result is stored XSS, not reflected. This is a heuristic, because the scanner does not know all of a project's own sanitizing functions. For this rule the scanner provides a ready fix matched to the place in the HTML. See "Fix suggestions" in the README.
+
+The rule also reports user input that lands in HTML which the code assembles and does not print itself. Three shapes count. A function returns a string with HTML tags built from user data. A variable collects such HTML (`$html .= '<li>' . $_GET['x']`) and the function returns it. A property stores it (`$this->content = '<div>' . $_GET['x'] . '</div>'`). The code that prints the result is often in another file, so these findings have medium severity. User data pasted into `do_shortcode()` is reported for the same reason, because a visitor can then add a shortcode or an attribute of their own.
 
 ```php
 // Vulnerable
@@ -251,7 +258,19 @@ if ( in_array( $_POST['name'], $allowed, true ) ) {
 
 ## wp.auth.unprotected_action
 
-An `admin_post_*` or `wp_ajax_*` handler that changes state (saves an option, meta or database row, deletes something) without a nonce check and without a capability check. The handler can be a function, a closure or a class method from the same file (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ ClassName::class, 'm' ]`, `'ClassName::m'`). A missing capability check with a nonce present is medium severity, because the attack needs a logged-in account. A missing nonce, or both checks missing, is high severity. The rule skips handlers that call a helper with a guard-like name (containing, for example, `nonce`, `verify`, `permission`, `capability`). The finding points at the handler definition, not at the `add_action` call. This is a heuristic.
+An `admin_post_*` or `wp_ajax_*` handler, including the `nopriv` variants, that changes state (saves an option, meta or database row, deletes something) without a nonce check and without a capability check. The handler can be a function, a closure or a class method from the same file (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ ClassName::class, 'm' ]`, `'ClassName::m'`). A missing capability check with a nonce present is medium severity, because the attack needs a logged-in account. A missing nonce, or both checks missing, is high severity. The finding points at the handler definition, not at the `add_action` call. This is a heuristic.
+
+The rule follows calls to functions and methods from the same file. It looks for a nonce or capability check up to three calls deep. It counts a state change in a helper only up to two calls deep, and only when the helper gets request data in an argument or reads `$_GET`, `$_POST`, `$_REQUEST` or `$_FILES` itself. A helper that only tidies the plugin's own data says nothing about who controls the handler.
+
+The rule skips three kinds of handlers.
+
+- Handlers that call a helper with a guard-like name, for example one containing `nonce`, `verify`, `permission`, `capability`, `can_`, `is_user_logged_in` or `validate_ajax`. The scanner reads snake_case and camelCase alike, so `isUserAllowedToEdit()` counts like `is_user_allowed_to_edit()`. Names that only sound similar do not count, for example `wp_get_current_user`, `get_access_token` or `wp_kses_allowed_html`.
+- Handlers that write only to the profile of the logged-in user, such as `update_user_meta( get_current_user_id(), ... )`, or `update_user_option( $user->ID, ... )` after `$user = wp_get_current_user()`. They change only the caller's own data.
+- Handlers named like the dismissal of a notice, banner, tooltip or tour (for example `dismiss`, `notice`, `banner`, `pointer`, `welcome`, `promo`, `remind`) that only store an option, transient or user meta under a key that does not come from the request. They save interface state, not site data.
+
+The rule does not ask for a capability check in a handler that the same file registers for both `wp_ajax_*` and `wp_ajax_nopriv_*` with the same callback. Such a handler is public by design, so only the nonce check counts.
+
+The `init` and `admin_init` hooks are not checked. A test on popular plugins gave noise there and no additional vulnerability.
 
 ```php
 // Vulnerable

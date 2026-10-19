@@ -10,6 +10,8 @@ Rzutowanie na liczbę, `absint`, `intval`, `escapeshellarg` i `basename` zdejmuj
 
 Zmienna sprawdzona przed użyciem listą dozwolonych wartości przestaje być skażona. Liczą się: `in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, `is_numeric`, zakotwiczony regex, regex odrzucający każdy znak spoza zbioru, porównanie z literałem oraz wywołanie walidatora o nazwie w rodzaju `is_valid_*`, `is_allowed_*` albo `validate_*`. Sprawdzenie działa w ciele `if`, w gałęziach warunku trójargumentowego i po wczesnym wyjściu.
 
+Wartość domyślna wpisana do elementu superglobala go nie czyści. `$_REQUEST['orderby'] = 'id'` w gałęzi `if ( empty( $_REQUEST['orderby'] ) )` zostawia wartość odwiedzającego w drugiej gałęzi, więc dalsza część funkcji nadal uznaje `$_REQUEST['orderby']` za dane użytkownika. Zapis, który sam czyta superglobal i go czyści (`$_GET['x'] = sanitize_text_field( $_GET['x'] )`, `(int) $_GET['x']`), nadal czyści.
+
 Nieznane funkcje nie przenoszą skażenia, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
 
 | Reguła | Poziom | Pewność | CWE | Podpowiedź naprawy |
@@ -60,9 +62,12 @@ Zapytanie `$wpdb` budowane z danych użytkownika bez `prepare`. Superglobal wpro
 
 `esc_sql`, `addslashes` i `$wpdb->_escape` chronią tylko tekst w cudzysłowie. Wartość przepuszczona przez nie, ale wstawiona poza cudzysłowem, jest zgłaszana z wysoką wagą. Dotyczy to liczby po `=`, nazwy kolumny, `LIMIT`, `ORDER BY` i tekstu w odwrotnych apostrofach. Zgłoszenie jest pewne, gdy superglobal stoi wprost w wyrażeniu. Jest heurystyką, gdy dane idą przez zmienną.
 
+Reguła czyta też SQL, który WordPress składa za ciebie. Funkcja zarejestrowana na `posts_where`, `posts_orderby`, `posts_join` i pokrewnych hakach (`posts_search`, `posts_groupby`, `posts_fields`, `posts_clauses`, `posts_request`, `terms_clauses`, `comments_clauses`) zwraca tekst, który WordPress wkleja do zapytania. Dane użytkownika w tej wartości są zgłaszane. Zgłaszane są też dane przypisane do `query_where`, `query_orderby` i innych właściwości `query_*` obiektu zapytania (`pre_user_query`). Obowiązują te same zasady cudzysłowu: `esc_sql` chroni wartość w cudzysłowie, a poza nim nie chroni.
+
 ```php
 // Podatne
 $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders WHERE id = " . $_GET['id'] );
+add_filter( 'posts_orderby', function () { return $_GET['order']; } );
 $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY " . esc_sql( $_GET['orderby'] ) );
 
 // Poprawne
@@ -76,6 +81,8 @@ $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY $orderby" );
 Dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` albo w wartości zwracanej przez shortcode bez funkcji ucieczki. Odpowiedzi `json_encode` w `die`, `wp_die` i `printf` pomijamy, bo to zwykle AJAX.
 
 Źródłem mogą być superglobale, `filter_input`, `add_query_arg` bez adresu i atrybuty shortcode. Atrybuty shortcode (`$atts`, klucze z `shortcode_atts` i `extract`) wpisuje autor wpisu, więc skutkiem jest zapisany XSS, a nie odbity. To heurystyka, bo skaner nie zna wszystkich własnych funkcji czyszczących projektu. Dla tej reguły skaner podaje gotową poprawkę, dobraną do miejsca w HTML. Opis w sekcji "Podpowiedzi napraw" w README.
+
+Reguła zgłasza też dane użytkownika, które trafiają do HTML składanego w kodzie i niewypisywanego od razu. Liczą się trzy kształty. Funkcja zwraca tekst ze znacznikami HTML zbudowany z danych użytkownika. Zmienna zbiera taki HTML (`$html .= '<li>' . $_GET['x']`), a funkcja ją zwraca. Właściwość obiektu go przechowuje (`$this->content = '<div>' . $_GET['x'] . '</div>'`). Kod, który wypisuje wynik, często leży w innym pliku, więc takie zgłoszenia mają wagę średnią. Dane użytkownika wklejone do `do_shortcode()` są zgłaszane z tego samego powodu, bo odwiedzający może wtedy dodać własny shortcode albo atrybut.
 
 ```php
 // Podatne
@@ -251,7 +258,19 @@ if ( in_array( $_POST['name'], $allowed, true ) ) {
 
 ## wp.auth.unprotected_action
 
-Uchwyt `admin_post_*` albo `wp_ajax_*`, który zmienia stan (zapis opcji, meta, bazy, usunięcie) bez weryfikacji nonce i bez kontroli uprawnień. Uchwyt może być funkcją, domknięciem albo metodą klasy z tego samego pliku (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ Klasa::class, 'm' ]`, `'Klasa::m'`). Brak uprawnień przy obecnym nonce ma poziom średni, bo atak wymaga zalogowanego konta. Brak nonce albo brak obu zabezpieczeń ma poziom wysoki. Reguła pomija uchwyty, które wołają pomocnika o nazwie kontrolnej (zawierającej na przykład `nonce`, `verify`, `permission`, `capability`). Zgłoszenie wskazuje definicję uchwytu, a nie wywołanie `add_action`. To heurystyka.
+Uchwyt `admin_post_*` albo `wp_ajax_*`, także w wariancie `nopriv`, który zmienia stan (zapis opcji, meta, bazy, usunięcie) bez weryfikacji nonce i bez kontroli uprawnień. Uchwyt może być funkcją, domknięciem albo metodą klasy z tego samego pliku (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ Klasa::class, 'm' ]`, `'Klasa::m'`). Brak uprawnień przy obecnym nonce ma poziom średni, bo atak wymaga zalogowanego konta. Brak nonce albo brak obu zabezpieczeń ma poziom wysoki. Zgłoszenie wskazuje definicję uchwytu, a nie wywołanie `add_action`. To heurystyka.
+
+Reguła idzie za wywołaniami funkcji i metod z tego samego pliku. Nonce albo kontroli uprawnień szuka do trzech wywołań w głąb. Zmianę stanu w pomocniku liczy tylko do dwóch wywołań w głąb i tylko wtedy, gdy pomocnik dostaje dane z żądania w argumencie albo sam czyta `$_GET`, `$_POST`, `$_REQUEST` lub `$_FILES`. Pomocnik, który tylko porządkuje własne dane wtyczki, nie mówi nic o tym, kto steruje uchwytem.
+
+Reguła pomija trzy rodzaje uchwytów.
+
+- Uchwyty, które wołają pomocnika o nazwie kontrolnej, na przykład zawierającej `nonce`, `verify`, `permission`, `capability`, `can_`, `is_user_logged_in` albo `validate_ajax`. Skaner czyta tak samo snake_case i camelCase, więc `isUserAllowedToEdit()` liczy się jak `is_user_allowed_to_edit()`. Nazwy, które tylko brzmią podobnie, nie liczą się. Są to na przykład `wp_get_current_user`, `get_access_token` i `wp_kses_allowed_html`.
+- Uchwyty, które zapisują wyłącznie profil zalogowanego użytkownika, na przykład `update_user_meta( get_current_user_id(), ... )` albo `update_user_option( $user->ID, ... )` po `$user = wp_get_current_user()`. Zmieniają tylko dane wołającego.
+- Uchwyty o nazwie zamykającej powiadomienie, baner, wskazówkę albo przewodnik po panelu (na przykład `dismiss`, `notice`, `banner`, `pointer`, `welcome`, `promo`, `remind`), które zapisują opcję, transjent albo meta użytkownika pod kluczem niezależnym od żądania. Taki zapis pamięta stan interfejsu, a nie dane serwisu.
+
+Reguła nie żąda kontroli uprawnień w uchwycie, który ten sam plik rejestruje jednocześnie pod `wp_ajax_*` i `wp_ajax_nopriv_*` z tym samym callbackiem. Taki uchwyt jest publiczny z założenia, więc liczy się tylko nonce.
+
+Haki `init` i `admin_init` nie są sprawdzane. Test na popularnych wtyczkach dał tam szum i żadnej dodatkowej podatności.
 
 ```php
 // Podatne
