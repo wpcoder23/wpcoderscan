@@ -11,10 +11,10 @@ Twelve findings disappeared. In the hand review of 0.8.1, 11 of them were false 
 - `wp.xss.echo_superglobal` reads the place of the value. `sanitize_text_field`, `sanitize_textarea_field`, `wc_clean`, `sanitize_user`, `strip_tags` with one argument and `wp_strip_all_tags` remove tags but keep quotes. After one of them the rule reports the value only inside a quoted attribute, inside a tag, in an unquoted value or in a script. The text of a page, a comment and a `style` block count as covered. Before, `sanitize_text_field` and its three siblings ended the taint everywhere, and `strip_tags` and `wp_strip_all_tags` never did.
 - The rule finds the place from the HTML that the code prints before the value, both literal text and inline HTML, also across several `echo` expressions and statements. When no HTML around the value is known, for example a bare `echo sanitize_text_field( $x )`, it reports nothing.
 - `strip_tags` with a list of allowed tags still passes the taint on, because an allowed tag can carry an attribute with code. `html_entity_decode`, `htmlspecialchars_decode`, `wp_specialchars_decode`, `urldecode`, `rawurldecode` and `base64_decode` undo the cleaning.
+- `wp_kses`, `wp_kses_post` and `wp_kses_data` are read like `sanitize_text_field`. They strip the tags and attributes that are not allowed, but a value with quotes and no tags passes them, so inside a quoted attribute the value can still leave it. In the text of a page they stay sufficient. No pair and no finding of the measured sets changes.
 - A finding of this kind has medium severity and its own message that says the function only strips tags and that quotes stay in the value.
 - `--suggest` and `--patch` wrap such a value in the escaper that matches its place, for example `esc_attr( sanitize_text_field( $x ) )` inside a quoted attribute. A value in the text of a page gets no patch, because it needs none.
 - Known gap. `printf` and `sprintf` do not read the place from the format string, so `printf( '<input value="%s">', sanitize_text_field( $x ) )` is not reported.
-- Known gap. `wp_kses`, `wp_kses_post` and `wp_kses_data` still count as a cleaning in an attribute. A value with quotes and no tags passes them.
 - Known gap. `esc_attr` and `esc_html` in an unquoted attribute, in a URL attribute, in an event handler and in a script are not reported.
 
 ## 0.8.1

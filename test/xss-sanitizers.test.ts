@@ -96,6 +96,25 @@ echo '<a title="' . ${fn}( $_GET['t'] ) . '">x</a>';`);
     }
   });
 
+  it('wp_kses, wp_kses_post i wp_kses_data w atrybucie', async () => {
+    for (const call of ["wp_kses_post( $_GET['t'] )", "wp_kses_data( $_GET['t'] )", "wp_kses( $_GET['t'], 'post' )"]) {
+      const f = await xss(`<?php
+echo '<a title="' . ${call} . '">x</a>';`);
+      expect(f, call).toHaveLength(1);
+      expect(f[0].message).toContain('only strips tags');
+    }
+  });
+
+  it('poprawka opakowuje wp_kses_post w esc_attr', async () => {
+    const code = `<?php
+echo '<input value="' . wp_kses_post( $_GET['q'] ) . '">';`;
+    const f = await xss(code);
+    expect(f).toHaveLength(1);
+    const patched = applyEdits(code, f[0].patch?.edits ?? []);
+    expect(patched).toContain(`esc_attr( wp_kses_post( $_GET['q'] ) )`);
+    expect(await xss(patched ?? '')).toHaveLength(0);
+  });
+
   it('wynik w skrypcie', async () => {
     const f = await xss(`<script>
 var query = "<?php echo sanitize_text_field( $_GET['q'] ); ?>";
@@ -172,6 +191,13 @@ echo 'Szukano: ' . $q;`);
     const f = await xss(`<?php
 $q = sanitize_text_field( $_GET['q'] );
 echo '<p>' . $q . '</p>';`);
+    expect(f).toHaveLength(0);
+  });
+
+  it('wp_kses_post w akapicie i bez znanego HTML', async () => {
+    const f = await xss(`<?php
+echo '<div class="note">' . wp_kses_post( $_GET['t'] ) . '</div>';
+echo wp_kses_post( $_GET['t'] );`);
     expect(f).toHaveLength(0);
   });
 

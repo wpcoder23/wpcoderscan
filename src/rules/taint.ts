@@ -270,17 +270,18 @@ const XSS_CLEAN = [
   ...COMMON_CLEAN,
   'esc_html', 'esc_attr', 'esc_url', 'esc_url_raw', 'esc_js', 'esc_textarea',
   'esc_html__', 'esc_html_e', 'esc_html_x', 'esc_attr__', 'esc_attr_e', 'esc_attr_x',
-  'wp_kses', 'wp_kses_post', 'wp_kses_data',
   'sanitize_email', 'sanitize_key', 'sanitize_title', 'sanitize_file_name', 'sanitize_html_class',
   'wp_json_encode', 'htmlspecialchars', 'htmlentities',
 ];
 
 // Funkcje, które usuwają znaczniki, ale zostawiają cudzysłowy i nawiasy w tekście. W treści strony wartość po
 // nich jest bezpieczna. W atrybucie, w znaczniku i w skrypcie nie, bo cudzysłów wyprowadza ją z atrybutu.
+// Funkcje wp_kses* wycinają niedozwolone znaczniki i atrybuty, ale tekst z cudzysłowem przepuszczają tak samo.
 // strip_tags z drugim argumentem (lista dozwolonych znaczników) zostaje przenoszeniem skażenia, bo dozwolony
 // znacznik może nieść atrybut z kodem.
 const XSS_TEXT_SANITIZERS = [
   'sanitize_text_field', 'sanitize_textarea_field', 'wc_clean', 'sanitize_user', 'strip_tags', 'wp_strip_all_tags',
+  'wp_kses', 'wp_kses_post', 'wp_kses_data',
 ];
 
 // Funkcje, które z zakodowanego tekstu odtwarzają znaki specjalne. Po nich ucieczka przestaje obowiązywać.

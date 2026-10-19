@@ -27,6 +27,9 @@ const WRAPPABLE_CALLS = new Set([
   'sanitize_user',
   'wp_strip_all_tags',
   'strip_tags',
+  'wp_kses',
+  'wp_kses_post',
+  'wp_kses_data',
 ]);
 
 export interface Rendered {
