@@ -5,15 +5,15 @@
 // To heurystyka, więc domyślnie tylko ostrzega i nie łamie build.
 import { buildXssPatch } from '../fix/xss-patch';
 import { walk } from '../parser';
-import { asNode, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
+import { asNode, baseVariable, calledName, callArgs, nodeStart, type AnyNode } from './ast-utils';
 import { linkCallers } from './callers';
 import { findShortcodeHandlers, returnsArray } from './shortcodes';
-import { originText, TaintAnalyzer, viaText, XSS_SPEC } from './taint';
+import { chainParts, literalString, originText, TaintAnalyzer, viaText, XSS_SPEC } from './taint';
 import type { MessageKey } from '../i18n';
 import type { Finding, FileContext, Patch, PhpNode, Rule, Severity } from './types';
 
 // Ujścia XSS rozpoznawane w kodzie. Nazwę do komunikatu bierzemy z katalogu tłumaczeń.
-type Sink = 'echo' | 'exit' | 'shortcode' | 'printf' | 'wp_die';
+type Sink = 'echo' | 'exit' | 'shortcode' | 'printf' | 'wp_die' | 'html' | 'do_shortcode';
 
 const SINK_KEY: Record<Sink, MessageKey> = {
   echo: 'xss.sink.echo',
@@ -21,7 +21,44 @@ const SINK_KEY: Record<Sink, MessageKey> = {
   shortcode: 'xss.sink.shortcode',
   printf: 'xss.sink.printf',
   wp_die: 'xss.sink.wp_die',
+  html: 'xss.sink.html',
+  do_shortcode: 'xss.sink.do_shortcode',
 };
+
+// Ujścia wywnioskowane z kształtu kodu, nie z nazwy funkcji. Raportujemy je z poziomem średnim.
+const INFERRED_SINKS = new Set<Sink>(['html', 'do_shortcode']);
+
+const SCOPE_KINDS = new Set(['function', 'closure', 'method', 'arrowfunc']);
+
+// Literał ze znacznikiem HTML: <a href=, <div>, </p>, <br/>.
+const HTML_TAG = /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:[\s>/]|$)/;
+
+// Czy wyrażenie składa tekst z literałem pasującym do wzorca: 'x' . $a, "x $a" albo sprintf( 'x %s', $a ).
+function chainHasLiteral(expr: unknown, pattern: RegExp): boolean {
+  const e = asNode(expr);
+  if (!e) return false;
+  const target = e.kind === 'call' && calledName(e) === 'sprintf' ? callArgs(e)[0] : e;
+  const parts: AnyNode[] = [];
+  chainParts(target, parts);
+  return parts.some((part) => {
+    const lit = literalString(part);
+    return lit !== undefined && pattern.test(lit);
+  });
+}
+
+// Czy w zakresie zmienna dostaje tekst z HTML: $html = '<div>' . .., $html .= '<a href="' . .. albo $html['x'] = ...
+function scopeBuildsHtmlInto(scope: AnyNode, name: string): boolean {
+  let found = false;
+  walk(scope, (node) => {
+    if (found) return;
+    const n = node as AnyNode;
+    if (n.kind !== 'assign') return;
+    const left = asNode(n.left);
+    const base = left ? baseVariable(left) : undefined;
+    if (base && base.kind === 'variable' && base.name === name && chainHasLiteral(n.right, HTML_TAG)) found = true;
+  });
+  return found;
+}
 
 export const xssEchoRule: Rule = {
   id: 'wp.xss.echo_superglobal',
@@ -76,7 +113,7 @@ export const xssEchoRule: Rule = {
       if (hit.direct) {
         report(
           at,
-          hit.source ? 'medium' : 'high',
+          hit.source || INFERRED_SINKS.has(sink) ? 'medium' : 'high',
           ctx.t('xss.direct', {
             origin: originText(hit, ctx.t),
             sink: ctx.t(SINK_KEY[sink]),
@@ -110,14 +147,28 @@ export const xssEchoRule: Rule = {
         // die( $tekst ) wypisuje tekst bez ucieczki.
         const e = asNode(n.expression);
         if (e && e.kind !== 'number') check(e, n, 0, stack, 'exit');
-      } else if (n.kind === 'return' && shortcodeScopes.size > 0) {
-        // Wynik shortcode trafia do treści strony jako HTML bez ucieczki.
+      } else if (n.kind === 'return' && n.expr) {
         let scope: PhpNode | undefined;
         for (let i = stack.length - 1; i >= 0 && !scope; i--) {
-          if (['function', 'closure', 'method', 'arrowfunc'].includes(stack[i].kind)) scope = stack[i];
+          if (SCOPE_KINDS.has(stack[i].kind)) scope = stack[i];
         }
-        if (scope && shortcodeScopes.has(scope as AnyNode) && n.expr && !returnsArray(n.expr, scope as AnyNode)) {
-          check(n.expr, n, 0, stack, 'shortcode');
+        if (!scope) return;
+        if (shortcodeScopes.has(scope as AnyNode)) {
+          // Wynik shortcode trafia do treści strony jako HTML bez ucieczki.
+          if (!returnsArray(n.expr, scope as AnyNode)) check(n.expr, n, 0, stack, 'shortcode');
+        } else {
+          // Funkcja zwraca tekst z tagami HTML zbudowany z danych bez ucieczki. Wywołujący zwykle go wypisuje.
+          const expr = asNode(n.expr);
+          const buildsHtml = !!expr && (expr.kind === 'variable' && typeof expr.name === 'string'
+            ? scopeBuildsHtmlInto(scope as AnyNode, expr.name)
+            : chainHasLiteral(expr, HTML_TAG));
+          if (buildsHtml) check(n.expr, n, 0, stack, 'html');
+        }
+      } else if (n.kind === 'assign') {
+        // $obiekt->content = '<div>' . $dane . '</div>': HTML zapisany we właściwości, którą ktoś potem wypisze.
+        const left = asNode(n.left);
+        if (left && (left.kind === 'propertylookup' || left.kind === 'staticlookup') && chainHasLiteral(n.right, HTML_TAG)) {
+          check(n.right, n, 0, stack, 'html');
         }
       } else if (n.kind === 'call') {
         const fn = calledName(n);
@@ -127,6 +178,9 @@ export const xssEchoRule: Rule = {
         } else if (fn === 'wp_die' && args[0]) {
           // Komunikat wp_die jest wypisywany jako HTML bez ucieczki.
           check(args[0], n, 0, stack, 'wp_die');
+        } else if (fn === 'do_shortcode' && args[0]) {
+          // Dane wklejone do tekstu z kodami krótkimi mogą wstrzyknąć własny kod krótki albo atrybut.
+          check(args[0], n, 0, stack, 'do_shortcode');
         }
       }
     });

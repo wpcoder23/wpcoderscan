@@ -38,6 +38,14 @@ export const en = {
     '$wpdb->{method}() puts variable {var}, which holds data {origin}, into the query outside quotes. esc_sql() and addslashes() protect only text inside quotes, so a number, column name or ORDER BY clause built this way can still be injected.',
   'sqli.unquoted.fix':
     'Cast numbers with absint or (int). Check column names and sort direction against an allowlist. Escaping alone does not protect a value that stands outside quotes.',
+  'sqli.clause.direct':
+    'User input goes into the SQL clause {target} without prepare. WordPress adds this text to the query. Risk of SQL injection.',
+  'sqli.clause.viaVar':
+    'Variable {var}, which holds data {origin}, goes into the SQL clause {target} without prepare. WordPress adds this text to the query. Probable SQL injection.',
+  'sqli.clause.unquoted':
+    'User input goes into the SQL clause {target} outside quotes. esc_sql() and addslashes() protect only text inside quotes, so a number, column name or ORDER BY clause built this way can still be injected.',
+  'sqli.clause.unquoted.viaVar':
+    'Variable {var}, which holds data {origin}, goes into the SQL clause {target} outside quotes. esc_sql() and addslashes() protect only text inside quotes, so a number, column name or ORDER BY clause built this way can still be injected.',
   'sqli.param.message':
     '$wpdb->{method}() builds the query without prepare from the function parameter {var}. If user input reaches this function, it risks SQL injection.',
   'sqli.param.fix':
@@ -57,6 +65,8 @@ export const en = {
   'xss.sink.shortcode': 'the HTML returned by a shortcode',
   'xss.sink.printf': 'printf',
   'xss.sink.wp_die': 'wp_die',
+  'xss.sink.html': 'HTML text that the code assembles',
+  'xss.sink.do_shortcode': 'a do_shortcode call',
   'xss.patch.complete': 'Wrap the data in {names}.',
   'xss.patch.manual':
     'Wrap the data in {names}. The HTML context cannot be read from the code, so check that this is the right function.',

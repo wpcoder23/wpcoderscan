@@ -38,6 +38,14 @@ export const pl: Record<MessageKey, string> = {
     'Wywołanie $wpdb->{method}() wkleja zmienną {var}, która zawiera dane {origin}, do zapytania poza cudzysłowem. Funkcje esc_sql() i addslashes() chronią tylko tekst w cudzysłowie. Liczba, nazwa kolumny albo ORDER BY zbudowane w ten sposób nadal pozwalają na SQL injection.',
   'sqli.unquoted.fix':
     'Rzutuj liczby na int albo użyj absint. Nazwy kolumn i kierunek sortowania sprawdź na liście dozwolonych wartości. Sama ucieczka nie chroni wartości, która stoi poza cudzysłowem.',
+  'sqli.clause.direct':
+    'Dane od użytkownika trafiają do fragmentu zapytania {target} bez prepare. WordPress dopisuje ten tekst do zapytania. Grozi SQL injection.',
+  'sqli.clause.viaVar':
+    'Zmienna {var}, która zawiera dane {origin}, trafia do fragmentu zapytania {target} bez prepare. WordPress dopisuje ten tekst do zapytania. Prawdopodobny SQL injection.',
+  'sqli.clause.unquoted':
+    'Dane od użytkownika trafiają do fragmentu zapytania {target} poza cudzysłowem. Funkcje esc_sql() i addslashes() chronią tylko tekst w cudzysłowie. Liczba, nazwa kolumny albo ORDER BY zbudowane w ten sposób nadal pozwalają na SQL injection.',
+  'sqli.clause.unquoted.viaVar':
+    'Zmienna {var}, która zawiera dane {origin}, trafia do fragmentu zapytania {target} poza cudzysłowem. Funkcje esc_sql() i addslashes() chronią tylko tekst w cudzysłowie. Liczba, nazwa kolumny albo ORDER BY zbudowane w ten sposób nadal pozwalają na SQL injection.',
   'sqli.param.message':
     'Wywołanie $wpdb->{method}() buduje zapytanie z parametru {var} funkcji bez prepare. Jeśli do funkcji trafiają dane od użytkownika, grozi SQL injection.',
   'sqli.param.fix':
@@ -57,6 +65,8 @@ export const pl: Record<MessageKey, string> = {
   'xss.sink.shortcode': 'zwracanego HTML shortcode',
   'xss.sink.printf': 'printf',
   'xss.sink.wp_die': 'wp_die',
+  'xss.sink.html': 'tekstu HTML składanego w kodzie',
+  'xss.sink.do_shortcode': 'wywołania do_shortcode',
   'xss.patch.complete': 'Opakuj dane w {names}.',
   'xss.patch.manual':
     'Opakuj dane w {names}. Kontekst HTML nie wynika z kodu, więc sprawdź, czy to właściwa funkcja.',

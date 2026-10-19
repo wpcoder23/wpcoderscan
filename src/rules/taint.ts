@@ -586,6 +586,20 @@ function startOffset(node: unknown): number {
   return loc?.start?.offset ?? Number.MAX_SAFE_INTEGER;
 }
 
+// Czy wyrażenie sięga po jakikolwiek superglobal.
+function mentionsSuperglobal(node: unknown): boolean {
+  if (Array.isArray(node)) return (node as unknown[]).some(mentionsSuperglobal);
+  const n = asNode(node);
+  if (!n) return false;
+  if (n.kind === 'variable') return typeof n.name === 'string' && SUPERGLOBALS.has(n.name);
+  for (const k of Object.keys(n)) {
+    if (SKIP_KEYS.has(k)) continue;
+    const v = n[k];
+    if (v && typeof v === 'object' && mentionsSuperglobal(v)) return true;
+  }
+  return false;
+}
+
 // Tablica zapisana wprost, której wszystkie wpisy mają klucz literalny albo nie mają klucza wcale.
 function literalEntries(arr: AnyNode): boolean {
   const items = Array.isArray(arr.items) ? (arr.items as unknown[]) : [];
@@ -669,7 +683,11 @@ function collectEvents(node: unknown, root: AnyNode, out: TaintEvent[], anc: Any
     if (left) {
       const isElement = left.kind === 'offsetlookup';
       const target = isElement ? baseVariable(left) : left;
-      if (target && target.kind === 'variable' && typeof target.name === 'string') {
+      // Wartość domyślna wpisana do superglobala w jednej gałęzi ($_REQUEST['orderby'] = 'id' po empty())
+      // nie czyści go dla reszty kodu, bo w drugiej gałęzi zostaje to, co przysłał użytkownik. Zapis, który
+      // sam sięga po superglobal (sanitize_text_field( $_GET['x'] ), (int) $_GET['x']), nadal czyści.
+      const keepsRequest = !!target && target.kind === 'variable' && SUPERGLOBALS.has(target.name as string) && !mentionsSuperglobal(n.right);
+      if (target && target.kind === 'variable' && typeof target.name === 'string' && !keepsRequest) {
         const plain = n.operator === '=' || typeof n.operator !== 'string';
         out.push({
           off: endOffset(n),

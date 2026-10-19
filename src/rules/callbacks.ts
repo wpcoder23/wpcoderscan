@@ -58,11 +58,16 @@ export interface MethodRef {
   method: string;
 }
 
+// Klasy indeksujemy po krótkiej nazwie, więc '\Ns\Klasa' i 'Ns\Klasa' sprowadzamy do 'klasa'.
+export function shortClassName(name: string): string {
+  return name.slice(name.lastIndexOf('\\') + 1).toLowerCase();
+}
+
 // Rozwiązuje callback zapisany jako tablica albo tekst 'Klasa::metoda'.
 export function resolveMethodCallback(cb: AnyNode, stack: PhpNode[]): MethodRef | undefined {
   if (cb.kind === 'string' && typeof cb.value === 'string') {
     const m = /^\\?([A-Za-z_][\w\\]*)::([A-Za-z_]\w*)$/.exec(cb.value);
-    return m ? { cls: m[1].toLowerCase(), method: m[2] } : undefined;
+    return m ? { cls: shortClassName(m[1]), method: m[2] } : undefined;
   }
   if (cb.kind !== 'array') return undefined;
   const items = arrayItems(cb);
@@ -75,11 +80,11 @@ export function resolveMethodCallback(cb: AnyNode, stack: PhpNode[]): MethodRef 
   let cls: string | undefined;
   if (target.kind === 'variable' && target.name === 'this') cls = enclosingClass(stack);
   else if (target.kind === 'magic' && target.value === '__CLASS__') cls = enclosingClass(stack);
-  else if (target.kind === 'string' && typeof target.value === 'string') cls = target.value.replace(/^\\/, '').toLowerCase();
+  else if (target.kind === 'string' && typeof target.value === 'string') cls = shortClassName(target.value);
   else if (target.kind === 'staticlookup' && offsetName(target.offset) === 'class') {
     const what = asNode(target.what);
     if (what && (what.kind === 'selfreference' || what.kind === 'staticreference')) cls = enclosingClass(stack);
-    else if (what && what.kind === 'name' && typeof what.name === 'string') cls = what.name.replace(/^\\/, '').toLowerCase();
+    else if (what && what.kind === 'name' && typeof what.name === 'string') cls = shortClassName(what.name);
   }
   return cls ? { cls, method: methodNode.value } : undefined;
 }
