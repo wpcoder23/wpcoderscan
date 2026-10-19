@@ -1,10 +1,13 @@
 // Pomiar recall na zbiorze CVE: pobiera podatne wersje wtyczek z wordpress.org, skanuje je (tylko czytanie
 // i parsowanie) i sprawdza, czy skaner zgłasza błąd tej samej klasy w pliku i blisko linii z odnośnika CVE.
+// Liczy trzy trafienia: near (okno wokół linii CVE), func (okno albo cała funkcja, w której leży linia CVE)
+// i file (gdziekolwiek w pliku). Zawsze near <= func <= file.
 // Użycie: node benchmark/recall.mjs --lib dist/index.js --out results/current-recall.json [--extended] [--max 1000] [--data cves.json]
 // --data wskazuje plik w katalogu data/. Inny zbiór, na przykład ślepy, mierzy się tym samym skryptem.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { args, CACHE, download, extract, here, loadScanner, RESULTS, RULES_FOR } from './common.mjs';
+import { enclosingRange } from './function-range.mjs';
 
 const opt = args({
   lib: { type: 'string', default: 'dist/index.js' },
@@ -62,13 +65,17 @@ for (const job of list) {
     const wanted = `${job.slug}/${c.file}`.toLowerCase();
     const inFile = result.findings.filter((f) => f.file.toLowerCase() === wanted);
     const rules = RULES_FOR[c.cls] ?? [];
+    const near = inFile.some((f) => Math.abs(f.line - c.line) <= WINDOW && rules.includes(f.ruleId));
+    const range = enclosingRange(join(dir, job.slug, c.file), c.line);
+    const func = near || (range !== undefined && inFile.some((f) => f.line >= range[0] && f.line <= range[1] && rules.includes(f.ruleId)));
     return {
       id: c.id,
       cls: c.cls,
       file: c.file,
       line: c.line,
       fileFound: existsSync(join(dir, job.slug, c.file)),
-      nearClass: inFile.some((f) => Math.abs(f.line - c.line) <= WINDOW && rules.includes(f.ruleId)),
+      nearClass: near,
+      funcClass: func,
       fileClass: inFile.some((f) => rules.includes(f.ruleId)),
     };
   });
@@ -85,24 +92,28 @@ for (const r of rows) {
   for (const c of r.cves) {
     const key = `${c.id}|${r.slug}|${r.version}`;
     const prev = uniq.get(key);
-    if (!prev) uniq.set(key, { cls: c.cls, near: c.nearClass, file: c.fileClass });
+    if (!prev) uniq.set(key, { cls: c.cls, near: c.nearClass, func: c.funcClass, file: c.fileClass });
     else {
       prev.near ||= c.nearClass;
+      prev.func ||= c.funcClass;
       prev.file ||= c.fileClass;
     }
   }
 }
 const byCls = {};
 for (const v of uniq.values()) {
-  const b = (byCls[v.cls] ??= { pairs: 0, near: 0, file: 0 });
+  const b = (byCls[v.cls] ??= { pairs: 0, near: 0, func: 0, file: 0 });
   b.pairs++;
   if (v.near) b.near++;
+  if (v.func) b.func++;
   if (v.file) b.file++;
 }
 const failed = rows.filter((r) => r.status !== 'ok').length;
 console.log(`Unique (CVE, plugin, version) pairs: ${uniq.size}. Versions that could not be scanned: ${failed}.`);
 console.table(byCls);
 const near = [...uniq.values()].filter((v) => v.near).length;
+const func = [...uniq.values()].filter((v) => v.func).length;
 const file = [...uniq.values()].filter((v) => v.file).length;
 console.log(`near: ${near} of ${uniq.size} (${((100 * near) / uniq.size).toFixed(1)}%), file: ${file} of ${uniq.size} (${((100 * file) / uniq.size).toFixed(1)}%)`);
+console.log(`func: ${func} of ${uniq.size} (${((100 * func) / uniq.size).toFixed(1)}%)`);
 console.log(`Saved ${out}`);

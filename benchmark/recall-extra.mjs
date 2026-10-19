@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { args, CACHE, download, extract, here, loadScanner, RESULTS } from './common.mjs';
+import { enclosingRange } from './function-range.mjs';
 
 const opt = args({
   lib: { type: 'string', default: 'dist/index.js' },
@@ -72,10 +73,12 @@ for (const job of list) {
   const perCve = job.cves.map((c) => {
     const wanted = `${job.slug}/${c.file}`.toLowerCase();
     const inFile = result.findings.filter((f) => f.file.toLowerCase() === wanted);
-    const hit = (rules) => ({
-      near: inFile.some((f) => Math.abs(f.line - c.line) <= WINDOW && rules.includes(f.ruleId)),
-      file: inFile.some((f) => rules.includes(f.ruleId)),
-    });
+    const range = enclosingRange(join(dir, job.slug, c.file), c.line);
+    const hit = (rules) => {
+      const near = inFile.some((f) => Math.abs(f.line - c.line) <= WINDOW && rules.includes(f.ruleId));
+      const func = near || (range !== undefined && inFile.some((f) => f.line >= range[0] && f.line <= range[1] && rules.includes(f.ruleId)));
+      return { near, func, file: inFile.some((f) => rules.includes(f.ruleId)) };
+    };
     const before = hit(RULES[c.cls].existing);
     const after = hit([...RULES[c.cls].existing, ...RULES[c.cls].added]);
     return {
@@ -85,8 +88,10 @@ for (const job of list) {
       line: c.line,
       fileFound: existsSync(join(dir, job.slug, c.file)),
       nearBefore: before.near,
+      funcBefore: before.func,
       fileBefore: before.file,
       nearAfter: after.near,
+      funcAfter: after.func,
       fileAfter: after.file,
     };
   });
@@ -105,16 +110,16 @@ for (const r of rows) {
     const prev = uniq.get(key);
     if (!prev) uniq.set(key, { ...c });
     else
-      for (const k of ['nearBefore', 'fileBefore', 'nearAfter', 'fileAfter']) prev[k] ||= c[k];
+      for (const k of ['nearBefore', 'funcBefore', 'fileBefore', 'nearAfter', 'funcAfter', 'fileAfter']) prev[k] ||= c[k];
   }
 }
 const byCls = {};
-const total = { pairs: 0, nearBefore: 0, nearAfter: 0, fileBefore: 0, fileAfter: 0 };
+const total = { pairs: 0, nearBefore: 0, nearAfter: 0, funcBefore: 0, funcAfter: 0, fileBefore: 0, fileAfter: 0 };
 for (const v of uniq.values()) {
-  const b = (byCls[v.cls] ??= { pairs: 0, nearBefore: 0, nearAfter: 0, fileBefore: 0, fileAfter: 0 });
+  const b = (byCls[v.cls] ??= { pairs: 0, nearBefore: 0, nearAfter: 0, funcBefore: 0, funcAfter: 0, fileBefore: 0, fileAfter: 0 });
   for (const t of [b, total]) {
     t.pairs++;
-    for (const k of ['nearBefore', 'nearAfter', 'fileBefore', 'fileAfter']) if (v[k]) t[k]++;
+    for (const k of ['nearBefore', 'nearAfter', 'funcBefore', 'funcAfter', 'fileBefore', 'fileAfter']) if (v[k]) t[k]++;
   }
 }
 const failed = rows.filter((r) => r.status !== 'ok').length;
@@ -122,5 +127,6 @@ console.log(`Unique (CVE, plugin, version) pairs: ${uniq.size}. Versions that co
 console.table(byCls);
 const pct = (n) => `${n} of ${total.pairs} (${((100 * n) / total.pairs).toFixed(1)}%)`;
 console.log(`near: before ${pct(total.nearBefore)}, after ${pct(total.nearAfter)}`);
+console.log(`func: before ${pct(total.funcBefore)}, after ${pct(total.funcAfter)}`);
 console.log(`file: before ${pct(total.fileBefore)}, after ${pct(total.fileAfter)}`);
 console.log(`Saved ${out}`);
