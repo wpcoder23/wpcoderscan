@@ -4,7 +4,13 @@ This document describes every rule: what it reports, what vulnerable code looks 
 
 **Confidence.** A *firm* finding is structurally unambiguous and fails the build by default. A *heuristic* finding can be a false alarm, so it only warns. The `--strict` flag counts heuristics toward the exit code too.
 
-**Data flow.** The rules follow user input within a single function. A superglobal directly at the point of use gives a firm finding. A variable fed from a superglobal gives a heuristic. Other sources (the REST request object, shortcode attributes, `add_query_arg`) always give a medium-severity heuristic. A numeric cast, `absint`, `intval`, `esc_sql`, `$wpdb->prepare`, `escapeshellarg` and `basename` remove the taint. A variable checked before use against an allowlist (`in_array`, `array_key_exists`, `isset` on an array keyed by a variable, `ctype_*`, an anchored regex, a comparison with a literal) stops being tainted. Unknown functions do not carry taint, so the scanner prefers to miss something over burying you in false alarms.
+**Data flow.** The rules follow user input inside a function and across calls between functions of the same file. A superglobal directly at the point of use gives a firm finding. A variable fed from a superglobal gives a heuristic. Other sources (the REST request object, shortcode attributes, `add_query_arg`) always give a medium-severity heuristic. When a function of the file is called with user input as an argument, that parameter counts as user input inside the function. This works for functions and for `$this->method()`, `self::`, `static::` and `ClassName::` calls, through chains of up to six calls. Calls into other files are not followed. A function that passes its first parameter to `shortcode_atts` counts as a shortcode handler, even when `add_shortcode` is in another file.
+
+A numeric cast, `absint`, `intval`, `escapeshellarg` and `basename` remove the taint. So does `$wpdb->prepare`, for the values passed as arguments. `esc_sql`, `addslashes` and `$wpdb->_escape` remove it only for a value inside quotes in the query.
+
+A variable checked before use against an allowlist stops being tainted. The checks that count are `in_array`, `array_key_exists`, `isset` on an array keyed by a variable, `ctype_*`, `is_numeric`, an anchored regex, a regex that rejects any character outside a set, a comparison with a literal, and a call to a validator named like `is_valid_*`, `is_allowed_*` or `validate_*`. A check counts inside the `if` body, in the branches of a ternary and after an early exit.
+
+Unknown functions do not carry taint, so the scanner prefers to miss something over burying you in false alarms.
 
 | Rule | Severity | Confidence | CWE | Fix suggestion |
 | --- | --- | --- | --- | --- |
@@ -22,12 +28,19 @@ This document describes every rule: what it reports, what vulnerable code looks 
 
 A `$wpdb` query built from user input without `prepare`. A superglobal directly in the query is a firm, critical finding. A variable fed from a superglobal is a heuristic with high severity. Plain variables and table names are not reported.
 
+`prepare` protects only the values passed as arguments. User input pasted into the query text that `prepare` receives is still reported (`ORDER BY $orderby`, a column name, a table name built from input).
+
+`esc_sql`, `addslashes` and `$wpdb->_escape` protect only text inside quotes. A value escaped this way but placed outside quotes is reported with high severity. That covers a number after `=`, a column name, `LIMIT`, `ORDER BY` and text between backticks. The finding is firm when the superglobal sits right in the expression. It is a heuristic when the data comes through a variable.
+
 ```php
 // Vulnerable
 $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders WHERE id = " . $_GET['id'] );
+$wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY " . esc_sql( $_GET['orderby'] ) );
 
 // Correct
 $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}orders WHERE id = %d", $_GET['id'] ) );
+$orderby = in_array( $_GET['orderby'], array( 'date', 'total' ), true ) ? $_GET['orderby'] : 'date';
+$wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY $orderby" );
 ```
 
 ## wp.xss.echo_superglobal
@@ -50,7 +63,7 @@ The source can be a superglobal, `filter_input`, `add_query_arg` without a URL, 
 
 ## wp.unserialize.user_input
 
-`unserialize` or `maybe_unserialize` on superglobal data. It lets an attacker inject a PHP object and run a gadget chain from another plugin. A call that has the second argument `array( 'allowed_classes' => false )` is not reported. A class list instead of `false` lowers the report to a medium heuristic, because the risk remains if one of the classes has magic methods. The scanner suggests this fix for a single-argument `unserialize`.
+`unserialize` or `maybe_unserialize` on superglobal data, or on a variable fed from user input (a heuristic). A call inside `if ( is_serialized_string( $x ) )` is skipped, because such a string cannot hold an object. It lets an attacker inject a PHP object and run a gadget chain from another plugin. A call that has the second argument `array( 'allowed_classes' => false )` is not reported. A class list instead of `false` lowers the report to a medium heuristic, because the risk remains if one of the classes has magic methods. The scanner suggests this fix for a single-argument `unserialize`.
 
 ```php
 // Vulnerable
@@ -66,9 +79,12 @@ $settings = unserialize( $_POST['settings'], array( 'allowed_classes' => false )
 
 Code or command execution from user input: `eval`, `include` and `require` with a path from the user, backticks, and the `exec`, `system`, `shell_exec`, `passthru` family. Data straight from a superglobal is firm and critical. Data through a variable is a heuristic. `eval` without user input is a medium heuristic.
 
+Template loaders are sinks as well: `get_template_part`, `locate_template`, `load_template`, `wc_get_template`, `wc_get_template_part` and `wc_get_template_html`, and methods whose names say they load a template (`get_template`, `load_template`, `render_template`, `include_template` and similar). A template name built from user input can contain `../` and pull in a PHP file from outside the template folder. A loader defined in the same file is not reported at the call. The `include` inside it is reported once a caller passes user input.
+
 ```php
 // Vulnerable
 include $_GET['template'] . '.php';
+get_template_part( 'parts/' . $_GET['part'] );
 
 // Correct
 $allowed = array( 'list', 'single' );
@@ -99,7 +115,7 @@ register_rest_route( 'demo/v1', '/orders', array(
 
 ## wp.sqli.param_unprepared
 
-An extended rule, enabled with the `--extended` flag. It reports a function parameter concatenated into a `$wpdb` query without `prepare`. The scanner cannot see the callers, so it does not know whether user input reaches the parameter. That is why it is always a medium-severity heuristic. Findings that the regular `wp.sqli.unprepared` rule already covers are skipped.
+An extended rule, enabled with the `--extended` flag. It reports a function parameter concatenated into a `$wpdb` query without `prepare`, when nothing in the file passes user input to that parameter. The scanner cannot see the callers in other files, so it does not know whether user input reaches the parameter. That is why it is always a medium-severity heuristic. When a call from the same file passes user input, the regular `wp.sqli.unprepared` rule reports it instead. Findings that the regular rule already covers are skipped.
 
 ```php
 // Vulnerable, if user input reaches the function
@@ -117,7 +133,7 @@ function demo_get_order( $id ) {
 
 ## wp.auth.unprotected_action
 
-An `admin_post_*` or `wp_ajax_*` handler that changes state (saves an option, meta or database row, deletes something) without a nonce check and without a capability check. The handler can be a function, a closure or a class method from the same file (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ ClassName::class, 'm' ]`, `'ClassName::m'`). A missing capability check with a nonce present is medium severity, because the attack needs a logged-in account. A missing nonce, or both checks missing, is high severity. The rule skips handlers that call a helper with a guard-like name (containing, for example, `nonce`, `verify`, `permission`, `capability`). This is a heuristic.
+An `admin_post_*` or `wp_ajax_*` handler that changes state (saves an option, meta or database row, deletes something) without a nonce check and without a capability check. The handler can be a function, a closure or a class method from the same file (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ ClassName::class, 'm' ]`, `'ClassName::m'`). A missing capability check with a nonce present is medium severity, because the attack needs a logged-in account. A missing nonce, or both checks missing, is high severity. The rule skips handlers that call a helper with a guard-like name (containing, for example, `nonce`, `verify`, `permission`, `capability`). The finding points at the handler definition, not at the `add_action` call. This is a heuristic.
 
 ```php
 // Vulnerable

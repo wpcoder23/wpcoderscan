@@ -4,7 +4,13 @@ Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wy
 
 **Pewność.** Znalezisko *pewne* (firm) jest strukturalnie jednoznaczne i domyślnie łamie build. Znalezisko *heurystyczne* może być fałszywym alarmem, więc tylko ostrzega. Flaga `--strict` liczy też heurystyki do kodu wyjścia.
 
-**Analiza danych.** Reguły śledzą dane użytkownika w obrębie jednej funkcji. Superglobal wprost w miejscu użycia daje wykrycie pewne. Zmienna zasilona superglobalem daje heurystykę. Inne źródła (obiekt żądania REST, atrybuty shortcode, `add_query_arg`) dają zawsze heurystykę o poziomie średnim. Rzutowanie na liczbę, `absint`, `intval`, `esc_sql`, `$wpdb->prepare`, `escapeshellarg` i `basename` zdejmują skażenie. Zmienna sprawdzona przed użyciem listą dozwolonych wartości (`in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, zakotwiczony regex, porównanie z literałem) przestaje być skażona. Nieznane funkcje go nie przenoszą, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
+**Analiza danych.** Reguły śledzą dane użytkownika w obrębie funkcji i przez wywołania między funkcjami z tego samego pliku. Superglobal wprost w miejscu użycia daje wykrycie pewne. Zmienna zasilona superglobalem daje heurystykę. Inne źródła (obiekt żądania REST, atrybuty shortcode, `add_query_arg`) dają zawsze heurystykę o poziomie średnim. Gdy funkcja z pliku jest wołana z danymi użytkownika w argumencie, ten parametr uchodzi w niej za dane użytkownika. Działa to dla funkcji oraz wywołań `$this->metoda()`, `self::`, `static::` i `Klasa::`, w łańcuchach do sześciu wywołań. Wywołań do innych plików skaner nie śledzi. Funkcja, która przekazuje pierwszy parametr do `shortcode_atts`, uchodzi za obsługę shortcode, także gdy `add_shortcode` leży w innym pliku.
+
+Rzutowanie na liczbę, `absint`, `intval`, `escapeshellarg` i `basename` zdejmują skażenie. Robi to też `$wpdb->prepare`, dla wartości podanych jako argumenty. Funkcje `esc_sql`, `addslashes` i `$wpdb->_escape` zdejmują je tylko dla wartości w cudzysłowie zapytania.
+
+Zmienna sprawdzona przed użyciem listą dozwolonych wartości przestaje być skażona. Liczą się: `in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, `is_numeric`, zakotwiczony regex, regex odrzucający każdy znak spoza zbioru, porównanie z literałem oraz wywołanie walidatora o nazwie w rodzaju `is_valid_*`, `is_allowed_*` albo `validate_*`. Sprawdzenie działa w ciele `if`, w gałęziach warunku trójargumentowego i po wczesnym wyjściu.
+
+Nieznane funkcje nie przenoszą skażenia, więc skaner woli przeoczyć niż zasypać cię fałszywymi alarmami.
 
 | Reguła | Poziom | Pewność | CWE | Podpowiedź naprawy |
 | --- | --- | --- | --- | --- |
@@ -22,12 +28,19 @@ Dokument opisuje każdą regułę: co zgłasza, jak wygląda podatny kod, jak wy
 
 Zapytanie `$wpdb` budowane z danych użytkownika bez `prepare`. Superglobal wprost w zapytaniu to wykrycie pewne i krytyczne. Zmienna zasilona superglobalem to heurystyka o wysokiej wadze. Zwykłe zmienne i nazwy tabel nie są zgłaszane.
 
+`prepare` chroni tylko wartości podane jako argumenty. Dane użytkownika wklejone w tekst zapytania, który dostaje `prepare`, są nadal zgłaszane (`ORDER BY $orderby`, nazwa kolumny, nazwa tabeli zbudowana z danych).
+
+`esc_sql`, `addslashes` i `$wpdb->_escape` chronią tylko tekst w cudzysłowie. Wartość przepuszczona przez nie, ale wstawiona poza cudzysłowem, jest zgłaszana z wysoką wagą. Dotyczy to liczby po `=`, nazwy kolumny, `LIMIT`, `ORDER BY` i tekstu w odwrotnych apostrofach. Zgłoszenie jest pewne, gdy superglobal stoi wprost w wyrażeniu. Jest heurystyką, gdy dane idą przez zmienną.
+
 ```php
 // Podatne
 $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders WHERE id = " . $_GET['id'] );
+$wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY " . esc_sql( $_GET['orderby'] ) );
 
 // Poprawne
 $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}orders WHERE id = %d", $_GET['id'] ) );
+$orderby = in_array( $_GET['orderby'], array( 'date', 'total' ), true ) ? $_GET['orderby'] : 'date';
+$wpdb->get_results( "SELECT * FROM {$wpdb->prefix}orders ORDER BY $orderby" );
 ```
 
 ## wp.xss.echo_superglobal
@@ -50,7 +63,7 @@ Dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` albo w wartości 
 
 ## wp.unserialize.user_input
 
-`unserialize` albo `maybe_unserialize` na danych z superglobala. Pozwala wstrzyknąć obiekt PHP i uruchomić łańcuch gadżetów z innej wtyczki. Wywołanie, które ma drugi argument `array( 'allowed_classes' => false )`, nie jest zgłaszane. Lista klas zamiast `false` obniża zgłoszenie do średniej heurystyki, bo ryzyko zostaje, jeśli któraś z klas ma metody magiczne. Skaner podpowiada tę poprawkę dla jednoargumentowego `unserialize`.
+`unserialize` albo `maybe_unserialize` na danych z superglobala albo na zmiennej zasilonej danymi użytkownika (heurystyka). Wywołanie wewnątrz `if ( is_serialized_string( $x ) )` jest pomijane, bo taki tekst nie może zawierać obiektu. Pozwala wstrzyknąć obiekt PHP i uruchomić łańcuch gadżetów z innej wtyczki. Wywołanie, które ma drugi argument `array( 'allowed_classes' => false )`, nie jest zgłaszane. Lista klas zamiast `false` obniża zgłoszenie do średniej heurystyki, bo ryzyko zostaje, jeśli któraś z klas ma metody magiczne. Skaner podpowiada tę poprawkę dla jednoargumentowego `unserialize`.
 
 ```php
 // Podatne
@@ -66,9 +79,12 @@ $settings = unserialize( $_POST['settings'], array( 'allowed_classes' => false )
 
 Wykonanie kodu albo polecenia z danych użytkownika: `eval`, `include` i `require` ze ścieżką od użytkownika, backticki oraz rodzina `exec`, `system`, `shell_exec`, `passthru`. Dane z superglobala wprost są pewne i krytyczne. Przez zmienną to heurystyka. `eval` bez danych użytkownika to średnia heurystyka.
 
+Ujściami są też funkcje ładujące szablon: `get_template_part`, `locate_template`, `load_template`, `wc_get_template`, `wc_get_template_part` i `wc_get_template_html` oraz metody, których nazwa mówi, że ładują szablon (`get_template`, `load_template`, `render_template`, `include_template` i podobne). Nazwa szablonu zbudowana z danych użytkownika może zawierać `../` i dołączyć plik PHP spoza katalogu szablonów. Funkcja ładująca zdefiniowana w tym samym pliku nie jest zgłaszana przy wywołaniu. Zgłaszany jest `include` w jej wnętrzu, gdy wywołanie przekazuje dane użytkownika.
+
 ```php
 // Podatne
 include $_GET['template'] . '.php';
+get_template_part( 'parts/' . $_GET['part'] );
 
 // Poprawne
 $allowed = array( 'list', 'single' );
@@ -99,7 +115,7 @@ register_rest_route( 'demo/v1', '/orders', array(
 
 ## wp.sqli.param_unprepared
 
-Reguła rozszerzona, włączana flagą `--extended`. Zgłasza parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących, więc nie wie, czy do parametru trafiają dane od użytkownika. Dlatego to zawsze heurystyka o poziomie średnim. Znaleziska, które pokrywa zwykła reguła `wp.sqli.unprepared`, są pomijane.
+Reguła rozszerzona, włączana flagą `--extended`. Zgłasza parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`, gdy nic w pliku nie przekazuje do niego danych użytkownika. Skaner nie widzi wywołujących z innych plików, więc nie wie, czy do parametru trafiają dane od użytkownika. Dlatego to zawsze heurystyka o poziomie średnim. Gdy wywołanie z tego samego pliku przekazuje dane użytkownika, zgłasza to zwykła reguła `wp.sqli.unprepared`. Znaleziska, które pokrywa zwykła reguła, są pomijane.
 
 ```php
 // Podatne, jeśli funkcję wołają dane od użytkownika
@@ -117,7 +133,7 @@ function demo_get_order( $id ) {
 
 ## wp.auth.unprotected_action
 
-Uchwyt `admin_post_*` albo `wp_ajax_*`, który zmienia stan (zapis opcji, meta, bazy, usunięcie) bez weryfikacji nonce i bez kontroli uprawnień. Uchwyt może być funkcją, domknięciem albo metodą klasy z tego samego pliku (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ Klasa::class, 'm' ]`, `'Klasa::m'`). Brak uprawnień przy obecnym nonce ma poziom średni, bo atak wymaga zalogowanego konta. Brak nonce albo brak obu zabezpieczeń ma poziom wysoki. Reguła pomija uchwyty, które wołają pomocnika o nazwie kontrolnej (zawierającej na przykład `nonce`, `verify`, `permission`, `capability`). To heurystyka.
+Uchwyt `admin_post_*` albo `wp_ajax_*`, który zmienia stan (zapis opcji, meta, bazy, usunięcie) bez weryfikacji nonce i bez kontroli uprawnień. Uchwyt może być funkcją, domknięciem albo metodą klasy z tego samego pliku (`[ $this, 'm' ]`, `[ self::class, 'm' ]`, `[ Klasa::class, 'm' ]`, `'Klasa::m'`). Brak uprawnień przy obecnym nonce ma poziom średni, bo atak wymaga zalogowanego konta. Brak nonce albo brak obu zabezpieczeń ma poziom wysoki. Reguła pomija uchwyty, które wołają pomocnika o nazwie kontrolnej (zawierającej na przykład `nonce`, `verify`, `permission`, `capability`). Zgłoszenie wskazuje definicję uchwytu, a nie wywołanie `add_action`. To heurystyka.
 
 ```php
 // Podatne

@@ -7,7 +7,7 @@ Security scanner for WordPress and PHP code. It finds vulnerabilities in plugins
 
 English | [Polski](README.pl.md)
 
-This is an early release (v0.4.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
+This is an early release (v0.5.0). The architecture and some of the solutions (report, scoring, command-line scanning) come from the ECC and AgentShield projects under the MIT license. The PHP and WordPress rules, the file collector, the parser integration and the mapping to OWASP ASVS and CWE are original. See the `NOTICE` file for the attribution details.
 
 ## Quick start
 
@@ -41,7 +41,7 @@ node dist/cli.js ./path-to-plugin --json
 
 ## What it detects
 
-The scanner covers eight classes of vulnerabilities. The rules follow user input within a single function. A variable assigned from `$_GET` is tainted. After a numeric cast, `absint`, `esc_sql` or `escapeshellarg` it is not.
+The scanner covers eight classes of vulnerabilities. The rules follow user input inside a function and across calls between functions of the same file. A variable assigned from `$_GET` is tainted. After a numeric cast, `absint` or `escapeshellarg` it is not. `esc_sql` removes the taint only for a value that sits inside quotes in the query.
 
 The scanner treats these as user input:
 
@@ -53,18 +53,18 @@ The scanner treats these as user input:
 
 Array elements are tracked by their literal key, so `$a['x']` taken from `$_GET` does not taint `$a['y']`.
 
-A variable checked before use stops being tainted. The scanner accepts `in_array`, `array_key_exists`, `isset` on an array keyed by a variable, `ctype_*`, `is_numeric`, an anchored regular expression and a comparison with a literal. This works in the body of an `if`, in the `else` branch after a negation, and after an early exit (`return`, `die`, `wp_die`). The scanner does not judge whether the allowlist itself is correct.
+A variable checked before use stops being tainted. The scanner accepts `in_array`, `array_key_exists`, `isset` on an array keyed by a variable, `ctype_*`, `is_numeric`, an anchored regular expression, a regular expression that rejects any character outside a set, a comparison with a literal and a validator named like `is_valid_*` or `validate_*`. This works in the body of an `if`, in the branches of a ternary, in the `else` branch after a negation, and after an early exit (`return`, `die`, `wp_die`). The scanner does not judge whether the allowlist itself is correct.
 
-- SQL injection: `$wpdb` queries built from user input without `prepare`. A superglobal directly in the query is firm. A variable fed from a superglobal is a heuristic.
+- SQL injection: `$wpdb` queries built from user input without `prepare`. A superglobal directly in the query is firm. A variable fed from a superglobal is a heuristic. `prepare` protects only the values passed to it, so user input pasted into the query text is still reported. So is `esc_sql` used outside quotes (a number, a column, `ORDER BY`).
 - REST: a route without `permission_callback` (firm). `__return_true` on a route that changes data (heuristic). Read-only routes are skipped.
-- RCE: `eval`, `include` and `require` with a path from the user, backticks, the `exec` and `shell_exec` family. Data straight from a superglobal is firm, data through a variable is a heuristic.
-- Deserialization: `unserialize` and `maybe_unserialize` on a superglobal (firm).
+- RCE: `eval`, `include` and `require` with a path from the user, template loaders given a name from the user (`get_template_part`, `load_template`), backticks, the `exec` and `shell_exec` family. Data straight from a superglobal is firm, data through a variable is a heuristic.
+- Deserialization: `unserialize` and `maybe_unserialize` on a superglobal (firm) or on a variable fed from user input (heuristic).
 - Options: `register_setting` without `sanitize_callback` (firm).
 - Secrets: provider keys (AWS, Stripe, GitHub, Slack, SendGrid, a private key with its body) are firm. A Google API key and detection by variable name are heuristics, because browser maps keys are often public by design.
 - XSS: user input in `echo`, `print`, `printf`, `die`, `wp_die` and in the value returned by a shortcode, without `esc_*`, `wp_kses`, `sanitize_*` or a cast (heuristic).
 - Nonce and capabilities: `admin_post_*` and `wp_ajax_*` handlers that change state without a nonce check or without `current_user_can` (heuristic). The handler can be a function, a closure or a class method from the same file. A missing capability check with a nonce present is medium severity, and missing both is high.
 
-Extended mode (`--extended`) adds the rule `wp.sqli.param_unprepared`: a function parameter concatenated into a `$wpdb` query without `prepare`. The scanner cannot see the callers, so this is a medium-severity warning and it is off by default. It matches many historical SQL injection bugs and also a lot of safe code, so you have to ask for it.
+Extended mode (`--extended`) adds the rule `wp.sqli.param_unprepared`: a function parameter concatenated into a `$wpdb` query without `prepare`. The scanner cannot see the callers in other files, so this is a medium-severity warning and it is off by default. It matches many historical SQL injection bugs and also a lot of safe code, so you have to ask for it.
 
 A full description of every rule with vulnerable and correct code examples is in [docs/rules.md](docs/rules.md).
 
@@ -86,9 +86,18 @@ Output is in English by default. Polish is available with `--lang pl` or the env
 npx wpcoderscan ./path-to-plugin --lang pl
 ```
 
+## Measured results
+
+The scanner is measured on known vulnerabilities and on popular plugins. The set has 475 pairs of a CVE and a vulnerable plugin version, from 2023 to 2025.
+
+- Default mode reports a finding of the right class within 25 lines of the CVE line in 144 of 475 cases (30.3%). With `--extended` it is 162 of 475 (34.1%).
+- On the 200 most popular free plugins from wordpress.org (49 thousand PHP files), 97 plugins have no finding. The median is one finding per plugin.
+
+Many of the misses are XSS bugs whose data flow crosses files. The scanner follows calls only inside a file. There is no false-positive rate here, because nobody has triaged all the findings. The method, the data and the scripts are in [benchmark/](benchmark/README.md). You can run them again.
+
 ## Limitations
 
-Data flow analysis works within a single function and a single file. It does not follow flow between functions or files and does not know a project's own sanitizing functions. Callbacks registered in a different file than their definition stay unresolved. No alarm does not prove that the code is safe. The scanner does not replace a code review or a penetration test.
+Data flow analysis works inside a file. It follows calls between functions and methods of the same file, up to six levels deep. It does not follow flow between files and does not know a project's own sanitizing functions. Callbacks registered in a different file than their definition stay unresolved. No alarm does not prove that the code is safe. The scanner does not replace a code review or a penetration test.
 
 ## Fix suggestions
 
@@ -129,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.4.0
+      - uses: wpcoder23/wpcoderscan@v0.5.0
         with:
           path: .
           fail-on: high

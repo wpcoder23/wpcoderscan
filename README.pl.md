@@ -7,7 +7,7 @@ Skaner bezpieczeństwa kodu WordPress i PHP. Wykrywa podatności w kodzie wtycze
 
 [English](README.md) | Polski
 
-To wczesny etap (v0.4.0). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
+To wczesny etap (v0.5.0). Architektura i część rozwiązań (raport, ocena, skanowanie z linii poleceń) pochodzą z projektów ECC i AgentShield na licencji MIT. Reguły PHP i WordPress, kolektor plików, integracja parsera i mapowanie na OWASP ASVS i CWE są oryginalne. Szczegóły atrybucji w pliku `NOTICE`.
 
 ## Szybki start
 
@@ -41,7 +41,7 @@ node dist/cli.js ./sciezka-do-wtyczki --json
 
 ## Co wykrywa
 
-Skaner pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w obrębie jednej funkcji. Zmienna przypisana z `$_GET` jest skażona, a po rzutowaniu na liczbę, `absint`, `esc_sql` czy `escapeshellarg` już nie.
+Skaner pokrywa osiem klas podatności. Reguły śledzą dane użytkownika w obrębie funkcji i przez wywołania między funkcjami z tego samego pliku. Zmienna przypisana z `$_GET` jest skażona, a po rzutowaniu na liczbę, `absint` czy `escapeshellarg` już nie. `esc_sql` zdejmuje skażenie tylko dla wartości w cudzysłowie zapytania.
 
 Za dane od użytkownika skaner uznaje:
 
@@ -53,18 +53,18 @@ Za dane od użytkownika skaner uznaje:
 
 Elementy tablicy są śledzone po literalnym kluczu, więc `$a['x']` z `$_GET` nie skazi `$a['y']`.
 
-Zmienna sprawdzona przed użyciem przestaje być skażona. Skaner uznaje za sprawdzenie `in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, `is_numeric`, zakotwiczone wyrażenie regularne i porównanie z literałem. Działa to w ciele `if`, w gałęzi `else` po negacji oraz po wczesnym wyjściu (`return`, `die`, `wp_die`). Skaner nie ocenia, czy lista dozwolonych wartości jest poprawna.
+Zmienna sprawdzona przed użyciem przestaje być skażona. Skaner uznaje za sprawdzenie `in_array`, `array_key_exists`, `isset` na tablicy z kluczem ze zmiennej, `ctype_*`, `is_numeric`, zakotwiczone wyrażenie regularne, wyrażenie regularne odrzucające każdy znak spoza zbioru, porównanie z literałem oraz walidator o nazwie w rodzaju `is_valid_*` albo `validate_*`. Działa to w ciele `if`, w gałęziach warunku trójargumentowego, w gałęzi `else` po negacji oraz po wczesnym wyjściu (`return`, `die`, `wp_die`). Skaner nie ocenia, czy lista dozwolonych wartości jest poprawna.
 
-- SQL injection: zapytania `$wpdb` budowane bez `prepare` z danych użytkownika. Superglobal wprost w zapytaniu jest pewny, zmienna zasilona superglobalem to heurystyka.
+- SQL injection: zapytania `$wpdb` budowane bez `prepare` z danych użytkownika. Superglobal wprost w zapytaniu jest pewny, zmienna zasilona superglobalem to heurystyka. `prepare` chroni tylko podane mu wartości, więc dane wklejone w tekst zapytania są nadal zgłaszane. Zgłaszamy też `esc_sql` użyte poza cudzysłowem (liczba, kolumna, `ORDER BY`).
 - REST: trasa bez `permission_callback` (pewne). `__return_true` na trasie zmieniającej dane (heurystyka). Trasy tylko do odczytu pomijamy.
-- RCE: `eval`, `include` i `require` ze ścieżką od użytkownika, backticki, rodzina `exec` i `shell_exec`. Dane z superglobala wprost są pewne, przez zmienną to heurystyka.
-- Deserializacja: `unserialize` i `maybe_unserialize` na superglobalu (pewne).
+- RCE: `eval`, `include` i `require` ze ścieżką od użytkownika, funkcje ładujące szablon po nazwie od użytkownika (`get_template_part`, `load_template`), backticki, rodzina `exec` i `shell_exec`. Dane z superglobala wprost są pewne, przez zmienną to heurystyka.
+- Deserializacja: `unserialize` i `maybe_unserialize` na superglobalu (pewne) albo na zmiennej zasilonej danymi użytkownika (heurystyka).
 - Opcje: `register_setting` bez `sanitize_callback` (pewne).
 - Sekrety: klucze dostawców (AWS, Stripe, GitHub, Slack, SendGrid, klucz prywatny z treścią) jako pewne. Klucz API Google i wykrycie po nazwie zmiennej jako heurystyka, bo klucze do map bywają publiczne z założenia.
 - XSS: dane użytkownika w `echo`, `print`, `printf`, `die`, `wp_die` oraz w wartości zwracanej przez shortcode, bez `esc_*`, `wp_kses`, `sanitize_*` ani rzutowania (heurystyka).
 - Nonce i uprawnienia: uchwyty `admin_post_*` i `wp_ajax_*`, które zmieniają stan bez weryfikacji nonce albo bez `current_user_can` (heurystyka). Uchwytem może być funkcja, domknięcie albo metoda klasy z tego samego pliku. Brak uprawnień przy obecnym nonce to poziom średni, a brak obu zabezpieczeń to wysoki.
 
-Tryb rozszerzony (`--extended`) dodaje regułę `wp.sqli.param_unprepared`: parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących, więc to ostrzeżenie średniego poziomu, domyślnie wyłączone. Tak wygląda wiele historycznych podatności SQL injection, a zarazem sporo bezpiecznego kodu, dlatego trzeba o nią poprosić.
+Tryb rozszerzony (`--extended`) dodaje regułę `wp.sqli.param_unprepared`: parametr funkcji wklejony do zapytania `$wpdb` bez `prepare`. Skaner nie widzi wywołujących z innych plików, więc to ostrzeżenie średniego poziomu, domyślnie wyłączone. Tak wygląda wiele historycznych podatności SQL injection, a zarazem sporo bezpiecznego kodu, dlatego trzeba o nią poprosić.
 
 Pełny opis każdej reguły z przykładami podatnego i poprawnego kodu jest w [docs/reguly.md](docs/reguly.md) (po angielsku: [docs/rules.md](docs/rules.md)).
 
@@ -86,9 +86,18 @@ Wyjście jest domyślnie po angielsku. Polskie komunikaty włączysz flagą `--l
 npx wpcoderscan ./sciezka-do-wtyczki --lang pl
 ```
 
+## Wyniki pomiarów
+
+Skaner mierzymy na znanych podatnościach i na popularnych wtyczkach. Zbiór ma 475 par: zgłoszenie CVE i podatna wersja wtyczki, lata 2023-2025.
+
+- Tryb domyślny zgłasza znalezisko właściwej klasy w odległości do 25 linii od linii z CVE w 144 z 475 przypadków (30,3%). Z `--extended` jest to 162 z 475 (34,1%).
+- Na 200 najpopularniejszych darmowych wtyczkach z wordpress.org (49 tysięcy plików PHP) 97 wtyczek nie ma żadnego znaleziska. Mediana to jedno znalezisko na wtyczkę.
+
+Wiele chybień to XSS, w którym dane przechodzą między plikami. Skaner śledzi wywołania tylko w obrębie pliku. Odsetka fałszywych alarmów tu nie ma, bo nikt nie przejrzał wszystkich znalezisk. Metoda, dane i skrypty są w [benchmark/](benchmark/README.md). Możesz je uruchomić ponownie.
+
 ## Ograniczenia
 
-Analiza danych działa w obrębie jednej funkcji i jednego pliku. Nie śledzi przepływu między funkcjami ani plikami i nie zna własnych funkcji czyszczących projektu. Callbacki rejestrowane w innym pliku niż ich definicja zostają nierozwiązane. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
+Analiza danych działa w obrębie pliku. Śledzi wywołania funkcji i metod z tego samego pliku, do sześciu poziomów. Nie śledzi przepływu między plikami i nie zna własnych funkcji czyszczących projektu. Callbacki rejestrowane w innym pliku niż ich definicja zostają nierozwiązane. Brak alarmu nie dowodzi, że kod jest bezpieczny. Skaner nie zastępuje przeglądu kodu ani testu penetracyjnego.
 
 ## Podpowiedzi napraw
 
@@ -129,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: wpcoder23/wpcoderscan@v0.4.0
+      - uses: wpcoder23/wpcoderscan@v0.5.0
         with:
           path: .
           fail-on: high
